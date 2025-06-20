@@ -1,4 +1,4 @@
-package com.example.sdat_s4_sprint_backend;
+package com.sdat_s4_sprint_backend;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

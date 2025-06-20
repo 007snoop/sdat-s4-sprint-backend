@@ -33,6 +33,7 @@ public class CityController {
         cityServ.deleteCity(id);
     }
 
+    @GetMapping("/{id}/airports")
     public List<?> getAirportsForCity(@PathVariable Long id) {
         City city = cityServ.getCity(id);
         return city != null ? city.getAirports() : List.of();

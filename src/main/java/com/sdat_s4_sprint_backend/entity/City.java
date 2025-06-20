@@ -12,6 +12,9 @@ public class City {
     private String name, province;
     private int population;
 
+    /**
+     * We set one to many here so we can path back in our airports with a many to one
+     */
     @OneToMany(mappedBy = "city", cascade = CascadeType.ALL)
     private List<Airport> airports;
 

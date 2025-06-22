@@ -3,9 +3,11 @@ package com.sdat_s4_sprint_backend.service;
 import com.sdat_s4_sprint_backend.entity.City;
 import com.sdat_s4_sprint_backend.repos.CityRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+@Service
 public class CityService {
     @Autowired
     private CityRepository cityRepo;

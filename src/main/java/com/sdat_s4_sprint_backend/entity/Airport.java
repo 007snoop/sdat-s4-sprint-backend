@@ -1,6 +1,7 @@
 package com.sdat_s4_sprint_backend.entity;
 
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 @Entity
@@ -12,6 +13,7 @@ public class Airport {
     private String portId;
     @ManyToOne
     @JoinColumn(name = "city_id") // this sets the foreign key restraint
+    @JsonIgnore
     private City city;
 
     public Long getId() {

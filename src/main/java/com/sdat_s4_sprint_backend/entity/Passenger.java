@@ -1,5 +1,6 @@
 package com.sdat_s4_sprint_backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.util.HashSet;
@@ -15,6 +16,7 @@ public class Passenger {
     private String firstName, lastName, phoneNumber;
     @ManyToOne
     @JoinColumn(name = "city_id")
+    @JsonIgnore
     private City city;
     @ManyToMany
     @JoinTable(

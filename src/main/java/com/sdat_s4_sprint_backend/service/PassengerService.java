@@ -1,5 +1,6 @@
 package com.sdat_s4_sprint_backend.service;
 
+import com.fasterxml.jackson.core.PrettyPrinter;
 import com.sdat_s4_sprint_backend.entity.City;
 import com.sdat_s4_sprint_backend.entity.Passenger;
 import com.sdat_s4_sprint_backend.repos.CityRepository;
@@ -36,6 +37,16 @@ public class PassengerService {
             e.setFirstName(p.getFirstName());
             e.setLastName(p.getLastName());
             e.setPhoneNumber(p.getPhoneNumber());
+            return passengerRepository.save(e);
+        } return null;
+    }
+
+    public Passenger patchPassenger(Long id, Passenger p) {
+        Passenger e = passengerRepository.findById(id).orElse(null);
+        if (e != null) {
+            if (p.getFirstName() != null) e.setFirstName(p.getFirstName());
+            if (p.getLastName() != null) e.setLastName(p.getLastName());
+            if (p.getPhoneNumber() != null) e.setPhoneNumber(p.getPhoneNumber());
             return passengerRepository.save(e);
         } return null;
     }

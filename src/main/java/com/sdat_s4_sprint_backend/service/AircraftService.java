@@ -34,4 +34,14 @@ public class AircraftService {
             return aircraftRepository.save(e);
         } return null;
     }
+
+    public Aircraft patchAircraft(Long id, Aircraft p) {
+        Aircraft e = aircraftRepository.findById(id).orElse(null);
+        if (e != null) {
+            if (p.getType() != null) e.setType(p.getType());
+            if (p.getAirlineName() != null) e.setAirlineName(p.getAirlineName());
+            if (p.getNumOfPassengers() != 0) e.setNumOfPassengers(p.getNumOfPassengers());
+            return aircraftRepository.save(e);
+        } return null;
+    }
 }

@@ -38,4 +38,15 @@ public class CityService {
             return cityRepo.save(e);
         } return null;
     }
+
+    public City patchCity(Long id, City p) {
+        City e = cityRepo.findById(id).orElse(null);
+        if (e != null) {
+            if (p.getName() != null) e.setName(p.getName());
+            if (p.getProvince() != null) e.setProvince(p.getProvince());
+            if (p.getPopulation() != 0) e.setPopulation(p.getPopulation());
+            if (p.getAirports() != null) e.setAirports(p.getAirports());
+            return cityRepo.save(e);
+        } return null;
+    }
 }

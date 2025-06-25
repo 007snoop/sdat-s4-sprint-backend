@@ -50,4 +50,14 @@ public class AirportService {
             return AirportRepo.save(e);
         } return null;
     }
+
+    public Airport patchAirport(Long id, Airport p) {
+        Airport e = AirportRepo.findById(id).orElse(null);
+        if (e != null) {
+            if (p.getName() != null) e.setName(p.getName());
+            if (p.getCity() != null) e.setCity(p.getCity());
+            if (p.getPortId() != null) e.setPortId(p.getPortId());
+            return AirportRepo.save(e);
+        } return null;
+    }
 }

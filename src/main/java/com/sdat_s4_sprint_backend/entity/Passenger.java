@@ -1,6 +1,6 @@
 package com.sdat_s4_sprint_backend.entity;
 
-import jakarta.persistence.Entity;
+import jakarta.persistence.*;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -8,12 +8,20 @@ import java.util.Set;
 @Entity
 public class Passenger {
 
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     private String firstName, lastName, phoneNumber;
-
+    @ManyToOne
+    @JoinColumn(name = "city_id")
     private City city;
-
+    @ManyToMany
+    @JoinTable(
+            name = "passenger_aircraft",
+            joinColumns = @JoinColumn(name = "passenger_id"),
+            inverseJoinColumns = @JoinColumn(name = "aircraft_id")
+    )
     private Set<Aircraft> aircraftSet = new HashSet<>();
 
     public Long getId() {

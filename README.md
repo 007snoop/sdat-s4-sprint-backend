@@ -72,14 +72,16 @@ POST /airports?cityId=1
 
 ### Passengers
 
-| Method | Endpoint                      | Description                  |
-|--------|-------------------------------|------------------------------|
-| GET    | `/passengers`                 | List all passengers          |
-| GET    | `/passengers/{id}`            | Get a passenger by ID        |
-| POST   | `/passengers?cityId={cityId}` | Create passenger in a city   |
-| PUT    | `/passengers/{id}`            | Replace a passenger          |
-| PATCH  | `/passengers/{id}`            | Partially update a passenger |
-| DELETE | `/passengers/{id}`            | Delete a passenger           |
+| Method | Endpoint                                          | Description                            |
+|--------|---------------------------------------------------|----------------------------------------|
+| GET    | `/passengers`                                     | List all passengers                    |
+| GET    | `/passengers/{id}`                                | Get a passenger by ID                  |
+| GET    | `/passengers/{id}/aircraft`                       | List aircraft a passenger has flown on |
+| POST   | `/passengers?cityId={cityId}`                     | Create passenger in a city             |
+| PUT    | `/passengers/{id}`                                | Replace a passenger                    |
+| PATCH  | `/passengers/{id}`                                | Partially update a passenger           |
+| DELETE | `/passengers/{id}`                                | Delete a passenger                     |
+| PUT    | `/passengers/{passengerId}/aircraft/{aircraftId}` | Assign aircraft to passenger           |
 
 **POST example:**
 
@@ -117,17 +119,6 @@ POST /passengers?cityId=2
   "numberOfPassengers": 180
 }
 ```
-
----
-
-## Relationships (Coming Soon)
-
-| Relationship              | Planned Endpoint Example                |
-|---------------------------|-----------------------------------------|
-| Add aircraft to passenger | `POST /passengers/{pid}/aircraft/{aid}` |
-| Add airport to aircraft   | `POST /aircraft/{aid}/airports/{apid}`  |
-
-Let me know if you need these wired up.
 
 ---
 

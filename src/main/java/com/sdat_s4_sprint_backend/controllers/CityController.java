@@ -38,4 +38,9 @@ public class CityController {
         City city = cityServ.getCity(id);
         return city != null ? city.getAirports() : List.of();
     }
+
+    @PutMapping("/{id}")
+    public City updateCity(@PathVariable Long id, @RequestBody City c) {
+        return cityServ.updateCity(id, c);
+    }
 }

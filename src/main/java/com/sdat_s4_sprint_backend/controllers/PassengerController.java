@@ -29,4 +29,9 @@ public class PassengerController {
     public void deletePassenger(@PathVariable Long id) {
         passengerService.deletePassenger(id);
     }
+
+    @PutMapping("/{id}")
+    public Passenger updatePassenger(@PathVariable Long id, @RequestBody Passenger p) {
+        return passengerService.updatePassenger(id, p);
+    }
 }

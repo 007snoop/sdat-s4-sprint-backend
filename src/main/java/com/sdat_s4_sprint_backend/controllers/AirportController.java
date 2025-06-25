@@ -33,5 +33,9 @@ public class AirportController {
         apServ.deleteAirport(id);
     }
 
+    @PutMapping("/{id}")
+    public Airport updateAirport(@PathVariable Long id, @RequestBody Airport a) {
+        return apServ.updateAirport(id, a);
+    }
 
 }

@@ -32,4 +32,9 @@ public class AircraftController {
     public void deleteAircraft(@PathVariable Long id) {
         aircraftService.deleteAircraft(id);
     }
+
+    @PutMapping("/{id}")
+    public Aircraft updateAircraft(@PathVariable Long id, @RequestBody Aircraft a) {
+        return aircraftService.updateAircraft(id, a);
+    }
 }

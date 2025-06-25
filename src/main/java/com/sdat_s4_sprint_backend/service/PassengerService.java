@@ -29,4 +29,14 @@ public class PassengerService {
     public void deletePassenger(Long id) {
         passengerRepository.deleteById(id);
     }
+
+    public Passenger updatePassenger(Long id, Passenger p) {
+        Passenger e = passengerRepository.findById(id).orElse(null);
+        if (e != null) {
+            e.setFirstName(p.getFirstName());
+            e.setLastName(p.getLastName());
+            e.setPhoneNumber(p.getPhoneNumber());
+            return passengerRepository.save(e);
+        } return null;
+    }
 }

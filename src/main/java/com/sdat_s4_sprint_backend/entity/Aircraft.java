@@ -14,7 +14,7 @@ public class Aircraft {
     private String type, airlineName;
     private int numOfPassengers;
 
-    @ManyToMany(mappedBy = "aircraftFlown")
+    @ManyToMany(mappedBy = "aircraftSet")
     private Set<Passenger> passengerSet = new HashSet<>();
 
     @ManyToMany

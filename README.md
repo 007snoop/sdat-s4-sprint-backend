@@ -44,7 +44,7 @@ https://sdat-s4-sprint-backend.onrender.com/
 
 ---
 
-### 🛫 Airports
+### Airports
 
 | Method | Endpoint                    | Description                 |
 |--------|-----------------------------|-----------------------------|

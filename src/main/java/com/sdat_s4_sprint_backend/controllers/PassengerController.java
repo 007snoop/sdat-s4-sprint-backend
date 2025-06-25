@@ -1,11 +1,16 @@
 package com.sdat_s4_sprint_backend.controllers;
 
+import com.sdat_s4_sprint_backend.entity.Aircraft;
 import com.sdat_s4_sprint_backend.entity.Passenger;
 import com.sdat_s4_sprint_backend.service.PassengerService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/passengers")
@@ -38,5 +43,21 @@ public class PassengerController {
     @PatchMapping("/{id}")
     public Passenger patchPassenger(@PathVariable Long id, @RequestBody Passenger p) {
         return passengerService.patchPassenger(id, p);
+    }
+
+    @GetMapping("/{id}/aircraft")
+    public Set<Aircraft> getAircraftFlown(@PathVariable Long id) {
+        Passenger p = passengerService.getPassenger(id);
+
+        if (p != null) {
+            return p.getAircraftSet();
+        } else {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Passenger not found");
+        }
+    }
+
+    @PutMapping("/{pId}/aircraft/{aId}")
+    public Passenger assignAircraft(@PathVariable Long pId, @PathVariable Long aId) {
+        return passengerService.assignAircraftToPassenger(pId,aId);
     }
 }

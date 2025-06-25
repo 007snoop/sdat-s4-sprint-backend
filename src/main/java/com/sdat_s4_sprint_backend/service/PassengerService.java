@@ -1,8 +1,10 @@
 package com.sdat_s4_sprint_backend.service;
 
 import com.fasterxml.jackson.core.PrettyPrinter;
+import com.sdat_s4_sprint_backend.entity.Aircraft;
 import com.sdat_s4_sprint_backend.entity.City;
 import com.sdat_s4_sprint_backend.entity.Passenger;
+import com.sdat_s4_sprint_backend.repos.AircraftRepository;
 import com.sdat_s4_sprint_backend.repos.CityRepository;
 import com.sdat_s4_sprint_backend.repos.PassengerRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +18,9 @@ public class PassengerService {
     private PassengerRepository passengerRepository;
     @Autowired
     private CityRepository cityRepository;
+    @Autowired
+    private AircraftRepository aircraftRepository;
+
 
     public List<Passenger> getAllPassengers() {
         return passengerRepository.findAll();
@@ -49,5 +54,14 @@ public class PassengerService {
             if (p.getPhoneNumber() != null) e.setPhoneNumber(p.getPhoneNumber());
             return passengerRepository.save(e);
         } return null;
+    }
+
+    public Passenger assignAircraftToPassenger(Long pId, Long aId) {
+        Passenger p = passengerRepository.findById(pId).orElseThrow(() -> new RuntimeException("Passenger not found"));
+        Aircraft a = aircraftRepository.findById(aId).orElseThrow(() -> new RuntimeException("Aircraft not found"));
+
+        p.getAircraftSet().add(a);
+        return passengerRepository.save(p);
+
     }
 }

@@ -37,4 +37,9 @@ public class AircraftController {
     public Aircraft updateAircraft(@PathVariable Long id, @RequestBody Aircraft a) {
         return aircraftService.updateAircraft(id, a);
     }
+
+    @PatchMapping("/{id}")
+    public Aircraft patchAircraft(@PathVariable Long id, @RequestBody Aircraft p) {
+        return aircraftService.patchAircraft(id, p);
+    }
 }

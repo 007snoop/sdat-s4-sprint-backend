@@ -34,4 +34,9 @@ public class PassengerController {
     public Passenger updatePassenger(@PathVariable Long id, @RequestBody Passenger p) {
         return passengerService.updatePassenger(id, p);
     }
+
+    @PatchMapping("/{id}")
+    public Passenger patchPassenger(@PathVariable Long id, @RequestBody Passenger p) {
+        return passengerService.patchPassenger(id, p);
+    }
 }

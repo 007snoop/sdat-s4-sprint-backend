@@ -38,4 +38,9 @@ public class AirportController {
         return apServ.updateAirport(id, a);
     }
 
+    @PatchMapping("/{id}")
+    public Airport patchAirport(@PathVariable Long id, @RequestBody Airport p) {
+        return apServ.patchAirport(id, p);
+    }
+
 }

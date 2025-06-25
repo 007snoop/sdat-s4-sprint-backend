@@ -43,4 +43,9 @@ public class CityController {
     public City updateCity(@PathVariable Long id, @RequestBody City c) {
         return cityServ.updateCity(id, c);
     }
+
+    @PatchMapping("/{id}")
+    public City patchCity(@PathVariable Long id, @RequestBody City p) {
+        return cityServ.patchCity(id, p);
+    }
 }

@@ -1,4 +1,66 @@
 package com.sdat_s4_sprint_backend.entity;
 
+import jakarta.persistence.Entity;
+
+import java.util.HashSet;
+import java.util.Set;
+
+@Entity
 public class Passenger {
+
+    private Long id;
+
+    private String firstName, lastName, phoneNumber;
+
+    private City city;
+
+    private Set<Aircraft> aircraftSet = new HashSet<>();
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public City getCity() {
+        return city;
+    }
+
+    public void setCity(City city) {
+        this.city = city;
+    }
+
+    public String getFirstName() {
+        return firstName;
+    }
+
+    public void setFirstName(String firstName) {
+        this.firstName = firstName;
+    }
+
+    public String getPhoneNumber() {
+        return phoneNumber;
+    }
+
+    public void setPhoneNumber(String phoneNumber) {
+        this.phoneNumber = phoneNumber;
+    }
+
+    public String getLastName() {
+        return lastName;
+    }
+
+    public void setLastName(String lastName) {
+        this.lastName = lastName;
+    }
+
+    public Set<Aircraft> getAircraftSet() {
+        return aircraftSet;
+    }
+
+    public void setAircraftSet(Set<Aircraft> aircraft) {
+        this.aircraftSet = aircraft;
+    }
 }

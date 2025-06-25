@@ -27,4 +27,15 @@ public class CityService {
     public void deleteCity(Long id) {
         cityRepo.deleteById(id);
     }
+
+    public City updateCity(Long id, City c) {
+        City e = cityRepo.findById(id).orElse(null);
+        if (e != null) {
+            e.setName(c.getName());
+            e.setProvince(c.getProvince());
+            e.setAirports(c.getAirports());
+            e.setPopulation(c.getPopulation());
+            return cityRepo.save(e);
+        } return null;
+    }
 }

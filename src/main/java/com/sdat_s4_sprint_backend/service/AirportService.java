@@ -6,6 +6,8 @@ import com.sdat_s4_sprint_backend.repos.AirportRepository;
 import com.sdat_s4_sprint_backend.repos.CityRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 
@@ -38,5 +40,14 @@ public class AirportService {
 
     public void deleteAirport(Long id) {
         AirportRepo.deleteById(id);
+    }
+
+    public Airport updateAirport(Long id, Airport a) {
+        Airport e = AirportRepo.findById(id).orElse(null);
+        if (e != null) {
+            e.setName(a.getName());
+            e.setPortId(a.getPortId());
+            return AirportRepo.save(e);
+        } return null;
     }
 }

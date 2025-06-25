@@ -24,4 +24,14 @@ public class AircraftService {
     public void deleteAircraft(Long id) {
         aircraftRepository.deleteById(id);
     }
+
+    public Aircraft updateAircraft(Long id, Aircraft a) {
+        Aircraft e = aircraftRepository.findById(id).orElse(null);
+        if (e != null) {
+            e.setType(a.getType());
+            e.setAirlineName(a.getAirlineName());
+            e.setNumOfPassengers(a.getNumOfPassengers());
+            return aircraftRepository.save(e);
+        } return null;
+    }
 }

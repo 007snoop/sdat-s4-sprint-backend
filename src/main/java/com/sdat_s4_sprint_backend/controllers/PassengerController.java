@@ -3,10 +3,12 @@ package com.sdat_s4_sprint_backend.controllers;
 import com.sdat_s4_sprint_backend.entity.Aircraft;
 import com.sdat_s4_sprint_backend.entity.Airport;
 import com.sdat_s4_sprint_backend.entity.Passenger;
+import com.sdat_s4_sprint_backend.service.AirportService;
 import com.sdat_s4_sprint_backend.service.PassengerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -18,6 +20,8 @@ import java.util.Set;
 public class PassengerController {
     @Autowired
     private PassengerService passengerService;
+    @Autowired
+    private AirportService airportService;
 
     @GetMapping
     public List<Passenger> getAllPassengers() {
@@ -71,4 +75,22 @@ public class PassengerController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Passenger not found");
         }
     }
+
+    @PatchMapping("/{passengerId}/airports/{airportId}")
+    public ResponseEntity<Void> addAirportToPassenger(
+            @PathVariable Long passengerId,
+            @PathVariable Long airportId) {
+
+        Passenger passenger = passengerService.getPassenger(passengerId);
+        Airport airport = airportService.getAirport(airportId); // You'll need this too
+
+        if (passenger != null && airport != null) {
+            passenger.getAirports().add(airport);
+            passengerService.savePassenger(passenger);
+            return ResponseEntity.ok().build();
+        } else {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
 }

@@ -1,11 +1,15 @@
 package com.sdat_s4_sprint_backend.controllers;
 
 import com.sdat_s4_sprint_backend.entity.Aircraft;
+import com.sdat_s4_sprint_backend.entity.Passenger;
 import com.sdat_s4_sprint_backend.service.AircraftService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/aircraft")
@@ -46,5 +50,15 @@ public class AircraftController {
     @PutMapping("/{acId}/airports/{apId}")
     public void addAptoAc(@PathVariable Long acId, @PathVariable Long apId) {
         aircraftService.addAirportToAircraft(acId,apId);
+    }
+
+    @GetMapping("/{id}/passengers")
+    public Set<Passenger> getPassengersOnAircraft(@PathVariable Long id) {
+        Aircraft a = aircraftService.getAircraft(id);
+        if (a != null) {
+            return a.getPassengers();
+        } else {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Aircraft not found");
+        }
     }
 }

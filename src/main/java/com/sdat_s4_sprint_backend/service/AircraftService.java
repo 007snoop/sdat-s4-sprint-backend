@@ -1,7 +1,9 @@
 package com.sdat_s4_sprint_backend.service;
 
 import com.sdat_s4_sprint_backend.entity.Aircraft;
+import com.sdat_s4_sprint_backend.entity.Airport;
 import com.sdat_s4_sprint_backend.repos.AircraftRepository;
+import com.sdat_s4_sprint_backend.repos.AirportRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -11,6 +13,8 @@ import java.util.List;
 public class AircraftService {
     @Autowired
     private AircraftRepository aircraftRepository;
+    @Autowired
+    private AirportRepository airportRepository;
 
     public List<Aircraft> getAllAircraft() {
         return aircraftRepository.findAll();
@@ -43,5 +47,15 @@ public class AircraftService {
             if (p.getNumOfPassengers() != 0) e.setNumOfPassengers(p.getNumOfPassengers());
             return aircraftRepository.save(e);
         } return null;
+    }
+
+    public void addAirportToAircraft(Long aId, Long apId) {
+        Aircraft a = aircraftRepository.findById(aId).orElse(null);
+        Airport ap = airportRepository.findById(apId).orElse(null);
+
+        if (a != null && ap != null) {
+            a.getAirports().add(ap);
+            aircraftRepository.save(a);
+        }
     }
 }

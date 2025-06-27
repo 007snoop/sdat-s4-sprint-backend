@@ -1,5 +1,6 @@
 package com.sdat_s4_sprint_backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.util.HashSet;
@@ -20,6 +21,7 @@ public class Aircraft {
     @ManyToMany
     @JoinTable(name = "aircraft_airport", joinColumns = @JoinColumn(name = "aircraft_id"), inverseJoinColumns =
     @JoinColumn(name = "airport_id"))
+    @JsonIgnore
     private Set<Airport> airportSet = new HashSet<>();
 
     public Long getId() {

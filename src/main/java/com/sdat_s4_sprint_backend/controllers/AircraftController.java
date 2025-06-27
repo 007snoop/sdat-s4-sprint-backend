@@ -42,4 +42,9 @@ public class AircraftController {
     public Aircraft patchAircraft(@PathVariable Long id, @RequestBody Aircraft p) {
         return aircraftService.patchAircraft(id, p);
     }
+
+    @PutMapping("/{aId}/airports/apId")
+    public void addAptoAc(@PathVariable Long acId, @PathVariable Long apId) {
+        aircraftService.addAirportToAircraft(acId,apId);
+    }
 }

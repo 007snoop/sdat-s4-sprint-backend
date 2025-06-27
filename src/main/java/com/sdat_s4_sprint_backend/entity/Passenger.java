@@ -24,6 +24,7 @@ public class Passenger {
             joinColumns = @JoinColumn(name = "passenger_id"),
             inverseJoinColumns = @JoinColumn(name = "aircraft_id")
     )
+    @JsonIgnore
     private Set<Aircraft> aircraftSet = new HashSet<>();
 
     public Long getId() {

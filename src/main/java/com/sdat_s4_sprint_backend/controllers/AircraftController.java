@@ -1,6 +1,7 @@
 package com.sdat_s4_sprint_backend.controllers;
 
 import com.sdat_s4_sprint_backend.entity.Aircraft;
+import com.sdat_s4_sprint_backend.entity.Airport;
 import com.sdat_s4_sprint_backend.entity.Passenger;
 import com.sdat_s4_sprint_backend.service.AircraftService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +58,16 @@ public class AircraftController {
         Aircraft a = aircraftService.getAircraft(id);
         if (a != null) {
             return a.getPassengers();
+        } else {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Aircraft not found");
+        }
+    }
+
+    @GetMapping("/{id}/airports")
+    public Set<Airport> getAirportsForAircraft(@PathVariable Long id) {
+        Aircraft a = aircraftService.getAircraft(id);
+        if (a != null) {
+            return a.getAirports();
         } else {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Aircraft not found");
         }

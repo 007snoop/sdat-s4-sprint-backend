@@ -27,6 +27,15 @@ public class Passenger {
     @JsonIgnore
     private Set<Aircraft> aircraftSet = new HashSet<>();
 
+    @ManyToMany
+    @JoinTable(
+            name = "passenger_airport",
+            joinColumns = @JoinColumn(name = "passenger_id"),
+            inverseJoinColumns = @JoinColumn(name = "airport_id")
+    )
+    @JsonIgnore
+    private Set<Airport> airports = new HashSet<>();
+
     public Long getId() {
         return id;
     }
@@ -73,5 +82,13 @@ public class Passenger {
 
     public void setAircraftSet(Set<Aircraft> aircraft) {
         this.aircraftSet = aircraft;
+    }
+
+    public Set<Airport> getAirports() {
+        return airports;
+    }
+
+    public void setAirports(Set<Airport> airports) {
+        this.airports = airports;
     }
 }

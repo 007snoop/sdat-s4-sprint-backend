@@ -1,6 +1,7 @@
 package com.sdat_s4_sprint_backend.controllers;
 
 import com.sdat_s4_sprint_backend.entity.Aircraft;
+import com.sdat_s4_sprint_backend.entity.Airport;
 import com.sdat_s4_sprint_backend.entity.Passenger;
 import com.sdat_s4_sprint_backend.service.PassengerService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,5 +60,15 @@ public class PassengerController {
     @PutMapping("/{pId}/aircraft/{aId}")
     public Passenger assignAircraft(@PathVariable Long pId, @PathVariable Long aId) {
         return passengerService.assignAircraftToPassenger(pId,aId);
+    }
+
+    @GetMapping("/{id}/airports")
+    public Set<Airport> getAirportForPassenger(@PathVariable Long id) {
+        Passenger p = passengerService.getPassenger(id);
+        if (p != null) {
+            return p.getAirports();
+        } else {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Passenger not found");
+        }
     }
 }

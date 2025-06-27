@@ -4,6 +4,9 @@ package com.sdat_s4_sprint_backend.entity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @Entity
 public class Airport {
     @Id
@@ -15,6 +18,9 @@ public class Airport {
     @JoinColumn(name = "city_id") // this sets the foreign key restraint
     @JsonIgnore
     private City city;
+    @ManyToMany(mappedBy = "airports")
+    @JsonIgnore
+    private Set<Passenger> passengers = new HashSet<>();
 
     public Long getId() {
         return id;
@@ -46,5 +52,13 @@ public class Airport {
 
     public void setCity(City city) {
         this.city = city;
+    }
+
+    public Set<Passenger> getPassengers() {
+        return passengers;
+    }
+
+    public void setPassengers(Set<Passenger> passengers) {
+        this.passengers = passengers;
     }
 }

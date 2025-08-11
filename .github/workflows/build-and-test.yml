@@ -2,9 +2,11 @@ name: Build, Push to ECR, and Deploy
 
 on:
   push:
-    branches: [ main ]
+    branches: ['**']        # run on any branch in your fork
   pull_request:
     branches: [ main ]
+  workflow_dispatch:         # adds a "Run workflow" button in Actions tab
+
 
 env:
   AWS_REGION: us-east-2

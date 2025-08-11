@@ -2,11 +2,10 @@ name: Build, Push to ECR, and Deploy
 
 on:
   push:
-    branches: ['**']        # run on any branch in your fork
+    branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:         # adds a "Run workflow" button in Actions tab
-
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-2
@@ -61,10 +60,13 @@ jobs:
           if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1; then
             aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null
           fi
+
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+
           docker build -t "$ECR_URI:$IMAGE_TAG" .
           docker push "$ECR_URI:$IMAGE_TAG"
+
           echo "ecr_uri=$ECR_URI" >> "$GITHUB_OUTPUT"
           echo "image=$ECR_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
@@ -86,30 +88,40 @@ jobs:
 
       - name: SSH into EC2 and deploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # pass values to the remote shell
+          AWS_REGION: ${{ env.AWS_REGION }}
+          ECR_URI: ${{ needs.build-and-push.outputs.ecr_uri }}
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_REGION,ECR_URI,IMAGE
           script: |
             set -e
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
-            # Install AWS CLI & Docker if missing (safe to re-run)
-            if ! command -v aws >/dev/null 2>&1; then sudo yum -y install awscli || sudo dnf -y install awscli; fi
+
+            # Ensure AWS CLI & Docker exist (safe to re-run)
+            if ! command -v aws >/dev/null 2>&1; then
+              sudo yum -y install awscli || sudo dnf -y install awscli
+            fi
             if ! command -v docker >/dev/null 2>&1; then
               sudo yum -y install docker || sudo dnf -y install docker
               sudo systemctl enable --now docker
               sudo usermod -aG docker ec2-user || true
             fi
-            # ECR login (instance needs IAM role with AmazonEC2ContainerRegistryReadOnly)
+
+            # Login to ECR (instance must have IAM role with ECR read)
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
-            docker pull "${{ needs.build-and-push.outputs.image }}"
+
+            # Deploy container
+            docker pull "$IMAGE"
             docker stop airportsim || true
             docker rm airportsim || true
             docker run -d \
               --name airportsim \
               -p 80:8080 \
               --restart always \
-              -e AWS_REGION=${AWS_REGION} \
+              -e AWS_REGION="$AWS_REGION" \
               -e useAwsSecrets=true \
-              "${{ needs.build-and-push.outputs.image }}"
+              "$IMAGE"

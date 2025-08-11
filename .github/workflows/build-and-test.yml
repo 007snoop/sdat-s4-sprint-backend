@@ -1,4 +1,4 @@
-name: Build and Test
+name: Build, Push to ECR, and Deploy
 
 on:
   push:
@@ -8,14 +8,17 @@ on:
     branches:
       - main
 
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: airportsim-backend
+  IMAGE_TAG: ${{ github.sha }}
+
 jobs:
-  build-and-test:
+  build-and-push:
     runs-on: ubuntu-latest
-    
-    env:
-      DB_URL: ${{ secrets.DB_URL }}
-      DB_USER: ${{ secrets.DB_USER }}
-      DB_PASS: ${{ secrets.DB_PASS }}
+    permissions:
+      id-token: write   # Required for OIDC
+      contents: read    # Required to read repo
 
     steps:
       - name: Checkout repository
@@ -38,5 +41,55 @@ jobs:
       - name: Make mvnw executable
         run: chmod +x ./mvnw
 
-      - name: Run tests
-        run: ./mvnw clean test
+      - name: Build JAR
+        run: ./mvnw clean package -DskipTests
+
+      - name: Configure AWS credentials from IAM Role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME_FOR_GITHUB>
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        run: |
+          ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text)
+          docker build -t $ECR_URI:$IMAGE_TAG .
+          docker push $ECR_URI:$IMAGE_TAG
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+
+  # Optional Deploy Job (runs only on push to main)
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS credentials from IAM Role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::876455127118:role/GitHubActions-Flight-Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: SSH into EC2 and deploy container
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            ECR_URI=${{ env.ECR_URI }}
+            docker pull $ECR_URI:${{ env.IMAGE_TAG }}
+            docker stop airportsim || true
+            docker rm airportsim || true
+            docker run -d \
+              --name airportsim \
+              -p 80:8080 \
+              -e AWS_REGION=${{ env.AWS_REGION }} \
+              -e useAwsSecrets=true \
+              $ECR_URI:${{ env.IMAGE_TAG }}

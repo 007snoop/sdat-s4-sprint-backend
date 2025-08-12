@@ -19,11 +19,9 @@
 
 	<properties>
 		<java.version>17</java.version>
-		<!-- Lock flyway-core and flyway-mysql to the same version -->
 		<flyway.version>11.7.2</flyway.version>
 	</properties>
 
-	<!-- Manage AWS SDK (v2) via BOM -->
 	<dependencyManagement>
 		<dependencies>
 			<dependency>
@@ -45,6 +43,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<!-- NEW: Actuator for health endpoint -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
 		<!-- MySQL driver -->

@@ -11,6 +11,8 @@ env:
   AWS_REGION: us-east-2
   ECR_REPOSITORY: airportsim-backend
   IMAGE_TAG: ${{ github.sha }}
+  # Set your target platform; change to linux/arm64 if EC2 is Graviton
+  DOCKER_PLATFORM: linux/amd64
 
 jobs:
   build-and-push:
@@ -20,8 +22,9 @@ jobs:
       contents: read
 
     outputs:
-      ecr_uri: ${{ steps.push.outputs.ecr_uri }}
-      image: ${{ steps.push.outputs.image }}
+      ecr_uri: ${{ steps.meta.outputs.ecr_uri }}
+      image_sha: ${{ steps.meta.outputs.image_sha }}
+      image_latest: ${{ steps.meta.outputs.image_latest }}
 
     steps:
       - uses: actions/checkout@v4
@@ -52,23 +55,33 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Ensure repo, build, and push
-        id: push
+      - name: Compute ECR URI and tags
+        id: meta
         run: |
-          set -e
-          # Create repo if missing
-          if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1; then
-            aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null
-          fi
-
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+          echo "ecr_uri=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_latest=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
 
-          docker build -t "$ECR_URI:$IMAGE_TAG" .
-          docker push "$ECR_URI:$IMAGE_TAG"
+      - name: Ensure repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1 \
+          || aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null
 
-          echo "ecr_uri=$ECR_URI" >> "$GITHUB_OUTPUT"
-          echo "image=$ECR_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (sha + latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ env.DOCKER_PLATFORM }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_sha }}
+            ${{ steps.meta.outputs.image_latest }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.ecr_uri }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.ecr_uri }}:buildcache,mode=max
 
   deploy:
     needs: build-and-push
@@ -89,19 +102,18 @@ jobs:
       - name: SSH into EC2 and deploy
         uses: appleboy/ssh-action@v1.2.0
         env:
-          # pass values to the remote shell
           AWS_REGION: ${{ env.AWS_REGION }}
           ECR_URI: ${{ needs.build-and-push.outputs.ecr_uri }}
-          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          IMAGE: ${{ needs.build-and-push.outputs.image_sha }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: AWS_REGION,ECR_URI,IMAGE
           script: |
-            set -e
+            set -euo pipefail
 
-            # Ensure AWS CLI & Docker exist (safe to re-run)
+            # Ensure AWS CLI & Docker
             if ! command -v aws >/dev/null 2>&1; then
               sudo yum -y install awscli || sudo dnf -y install awscli
             fi
@@ -111,13 +123,39 @@ jobs:
               sudo usermod -aG docker ec2-user || true
             fi
 
-            # Login to ECR (instance must have IAM role with ECR read)
+            # ECR login (instance role must allow ECR pull)
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
 
-            # Deploy container
+            # Pull new image
             docker pull "$IMAGE"
+
+            # Run new container alongside the old one with a temp name to health-check
+            NEW_NAME="airportsim_new_$RANDOM"
+            docker run -d \
+              --name "$NEW_NAME" \
+              -p 8081:8080 \
+              --restart unless-stopped \
+              -e AWS_REGION="$AWS_REGION" \
+              -e useAwsSecrets=true \
+              --health-cmd="curl -f http://localhost:8080/actuator/health || exit 1" \
+              --health-interval=10s --health-retries=6 --health-timeout=3s --health-start-period=10s \
+              "$IMAGE"
+
+            # Wait until healthy
+            echo "Waiting for new container to become healthy..."
+            for i in {1..12}; do
+              STATUS=$(docker inspect --format='{{json .State.Health.Status}}' "$NEW_NAME" 2>/dev/null || echo '"starting"')
+              echo "Health: $STATUS"
+              [ "$STATUS" = '"healthy"' ] && break
+              sleep 5
+            done
+            [ "$STATUS" = '"healthy"' ] || (echo "New container failed health check"; docker logs "$NEW_NAME"; exit 1)
+
+            # Swap: stop old, run on port 80
             docker stop airportsim || true
             docker rm airportsim || true
+            docker rm -f "$NEW_NAME" || true
+
             docker run -d \
               --name airportsim \
               -p 80:8080 \
@@ -125,3 +163,6 @@ jobs:
               -e AWS_REGION="$AWS_REGION" \
               -e useAwsSecrets=true \
               "$IMAGE"
+
+            # Cleanup dangling images
+            docker image prune -f || true

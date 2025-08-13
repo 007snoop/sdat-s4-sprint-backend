@@ -11,7 +11,6 @@ env:
   AWS_REGION: us-east-2
   ECR_REPOSITORY: airportsim-backend
   IMAGE_TAG: ${{ github.sha }}
-  # Set your target platform; change to linux/arm64 if EC2 is Graviton
   DOCKER_PLATFORM: linux/amd64
 
 jobs:
@@ -104,7 +103,7 @@ jobs:
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
           ECR_URI: ${{ needs.build-and-push.outputs.ecr_uri }}
-          IMAGE: ${{ needs.build-and-push.outputs.image_sha }}
+          IMAGE: ${{ needs.build-and-push.outputs.image_latest }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
@@ -113,56 +112,92 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Ensure AWS CLI & Docker
-            if ! command -v aws >/dev/null 2>&1; then
-              sudo yum -y install awscli || sudo dnf -y install awscli
-            fi
+            # Ensure prereqs
             if ! command -v docker >/dev/null 2>&1; then
               sudo yum -y install docker || sudo dnf -y install docker
               sudo systemctl enable --now docker
               sudo usermod -aG docker ec2-user || true
             fi
+            if ! command -v aws >/dev/null 2>&1; then
+              sudo yum -y install awscli || sudo dnf -y install awscli
+            fi
+            if ! command -v curl >/dev/null 2>&1; then
+              sudo yum -y install curl || sudo dnf -y install curl
+            fi
 
-            # ECR login (instance role must allow ECR pull)
+            # ECR login
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
 
-            # Pull new image
+            # Pull the image
             docker pull "$IMAGE"
 
-            # Run new container alongside the old one with a temp name to health-check
+            APP_NAME="airportsim"
             NEW_NAME="airportsim_new_$RANDOM"
+
+            # Kill any leftover blue/green attempts
+            for c in $(docker ps -a --format '{{.Names}}' | grep -E '^airportsim_new_' || true); do
+              docker rm -f "$c" || true
+            done
+
+            # Start candidate on 8081 with healthcheck + JVM cap
             docker run -d \
               --name "$NEW_NAME" \
               -p 8081:8080 \
               --restart unless-stopped \
-              -e AWS_REGION="$AWS_REGION" \
-              -e useAwsSecrets=true \
-              --health-cmd="curl -f http://localhost:8080/actuator/health || exit 1" \
+              -e SPRING_PROFILES_ACTIVE=prod \
+              -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+              --health-cmd="curl -fsS http://localhost:8080/actuator/health >/dev/null || exit 1" \
               --health-interval=10s --health-retries=6 --health-timeout=3s --health-start-period=10s \
               "$IMAGE"
 
-            # Wait until healthy
-            echo "Waiting for new container to become healthy..."
-            for i in {1..12}; do
+            echo "Waiting for $NEW_NAME to become healthy..."
+            for i in {1..18}; do
               STATUS=$(docker inspect --format='{{json .State.Health.Status}}' "$NEW_NAME" 2>/dev/null || echo '"starting"')
               echo "Health: $STATUS"
               [ "$STATUS" = '"healthy"' ] && break
               sleep 5
             done
-            [ "$STATUS" = '"healthy"' ] || (echo "New container failed health check"; docker logs "$NEW_NAME"; exit 1)
+            if [ "$STATUS" != '"healthy"' ]; then
+              echo "New container failed health check. Logs:"
+              docker logs --tail=200 "$NEW_NAME" || true
+              docker rm -f "$NEW_NAME" || true
+              exit 1
+            fi
 
-            # Swap: stop old, run on port 80
-            docker stop airportsim || true
-            docker rm airportsim || true
-            docker rm -f "$NEW_NAME" || true
-
+            # Cut over to port 80 (single live container)
+            docker rm -f "$APP_NAME" || true
             docker run -d \
-              --name airportsim \
+              --name "$APP_NAME" \
               -p 80:8080 \
               --restart always \
-              -e AWS_REGION="$AWS_REGION" \
-              -e useAwsSecrets=true \
+              -e SPRING_PROFILES_ACTIVE=prod \
+              -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
               "$IMAGE"
 
-            # Cleanup dangling images
+            # Verify live health
+            echo "Verifying $APP_NAME on port 80..."
+            for i in {1..12}; do
+              if curl -fsS http://localhost:80/actuator/health >/dev/null; then
+                echo "Live container healthy."
+                break
+              fi
+              sleep 5
+            done
+            if ! curl -fsS http://localhost:80/actuator/health >/dev/null; then
+              echo "Live container failed. Rolling back to validated blue on 80."
+              docker rm -f "$APP_NAME" || true
+              docker rm -f "$NEW_NAME" || true
+              docker run -d \
+                --name "$APP_NAME" \
+                -p 80:8080 \
+                --restart always \
+                -e SPRING_PROFILES_ACTIVE=prod \
+                -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+                "$IMAGE"
+              sleep 10
+              curl -fsS http://localhost:80/actuator/health >/dev/null || (docker logs --tail=200 "$APP_NAME" || true; exit 1)
+            fi
+
+            # Drop temp and clean old images
+            docker rm -f "$NEW_NAME" || true
             docker image prune -f || true

@@ -19,6 +19,7 @@
 
 	<properties>
 		<java.version>17</java.version>
+		<!-- Keeping for later if you want Flyway -->
 		<flyway.version>11.7.2</flyway.version>
 	</properties>
 
@@ -44,13 +45,12 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
-		<!-- NEW: Actuator for health endpoint -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
-		<!-- MySQL driver -->
+		<!-- MySQL -->
 		<dependency>
 			<groupId>com.mysql</groupId>
 			<artifactId>mysql-connector-j</artifactId>
@@ -73,26 +73,27 @@
 			<artifactId>jackson-databind</artifactId>
 		</dependency>
 
-		<!-- Flyway (core + MySQL database plugin) -->
-		<dependency>
-			<groupId>org.flywaydb</groupId>
-			<artifactId>flyway-core</artifactId>
-			<version>${flyway.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>org.flywaydb</groupId>
-			<artifactId>flyway-mysql</artifactId>
-			<version>${flyway.version}</version>
-		</dependency>
+		<!-- Flyway (optional; disable via properties for now) -->
+		<!--
+        <dependency>
+          <groupId>org.flywaydb</groupId>
+          <artifactId>flyway-core</artifactId>
+          <version>${flyway.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>org.flywaydb</groupId>
+          <artifactId>flyway-mysql</artifactId>
+          <version>${flyway.version}</version>
+        </dependency>
+        -->
 
-		<!-- Lambok -->
+		<!-- Lombok -->
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
 			<version>1.18.32</version>
 			<scope>provided</scope>
 		</dependency>
-
 
 		<!-- Tests -->
 		<dependency>
@@ -103,10 +104,28 @@
 	</dependencies>
 
 	<build>
+		<!-- Make absolutely sure resources (CSV/DAT) are packaged -->
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<includes>
+					<include>**/*</include>
+					<!-- explicit includes for clarity; not strictly required -->
+					<include>data/airports.csv</include>
+					<include>data/routes.dat</include>
+				</includes>
+			</resource>
+		</resources>
+
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<!-- ensures the executable fat jar is created on package -->
+					<mainClass>com.sdat_s4_sprint_backend.SdatS4SprintBackendApplication</mainClass>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>

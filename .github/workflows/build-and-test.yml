@@ -128,30 +128,28 @@ jobs:
             # ECR login
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
 
-            # Pull the image
+            # Pull image
             docker pull "$IMAGE"
 
             APP_NAME="airportsim"
             NEW_NAME="airportsim_new_$RANDOM"
 
-            # Kill any leftover blue/green attempts
+            # Clean previous blue/green attempts
             for c in $(docker ps -a --format '{{.Names}}' | grep -E '^airportsim_new_' || true); do
               docker rm -f "$c" || true
             done
 
-            # Start candidate on 8081 with healthcheck + JVM cap
+            # Start candidate on 8081 (use baked HEALTHCHECK + JVM cap)
             docker run -d \
               --name "$NEW_NAME" \
               -p 8081:8080 \
               --restart unless-stopped \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
-              --health-cmd="curl -fsS http://localhost:8080/actuator/health >/dev/null || exit 1" \
-              --health-interval=10s --health-retries=6 --health-timeout=3s --health-start-period=10s \
               "$IMAGE"
 
-            echo "Waiting for $NEW_NAME to become healthy..."
-            for i in {1..18}; do
+            echo "Waiting for $NEW_NAME to become healthy (Docker HEALTHCHECK)..."
+            for i in {1..24}; do
               STATUS=$(docker inspect --format='{{json .State.Health.Status}}' "$NEW_NAME" 2>/dev/null || echo '"starting"')
               echo "Health: $STATUS"
               [ "$STATUS" = '"healthy"' ] && break
@@ -174,7 +172,7 @@ jobs:
               -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
               "$IMAGE"
 
-            # Verify live health
+            # Verify live health externally on port 80
             echo "Verifying $APP_NAME on port 80..."
             for i in {1..12}; do
               if curl -fsS http://localhost:80/actuator/health >/dev/null; then

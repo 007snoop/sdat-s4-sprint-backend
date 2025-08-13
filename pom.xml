@@ -85,6 +85,15 @@
 			<version>${flyway.version}</version>
 		</dependency>
 
+		<!-- Lambok -->
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<version>1.18.32</version>
+			<scope>provided</scope>
+		</dependency>
+
+
 		<!-- Tests -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

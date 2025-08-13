@@ -139,7 +139,7 @@ jobs:
               docker rm -f "$c" || true
             done
 
-            # Start candidate on 8081 (use baked HEALTHCHECK + JVM cap)
+            # Start candidate on 8081 (uses baked HEALTHCHECK + JVM cap)
             docker run -d \
               --name "$NEW_NAME" \
               -p 8081:8080 \
@@ -172,30 +172,25 @@ jobs:
               -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
               "$IMAGE"
 
-            # Verify live health externally on port 80
-            echo "Verifying $APP_NAME on port 80..."
-            for i in {1..12}; do
-              if curl -fsS http://localhost:80/actuator/health >/dev/null; then
-                echo "Live container healthy."
-                break
-              fi
+            # Wait for Docker HEALTHCHECK on live container (avoid 503s during warmup)
+            echo "Waiting for $APP_NAME (port 80) to become healthy (Docker HEALTHCHECK)..."
+            for i in {1..24}; do
+              LStatus=$(docker inspect --format='{{json .State.Health.Status}}' "$APP_NAME" 2>/dev/null || echo '"starting"')
+              echo "Health(80): $LStatus"
+              [ "$LStatus" = '"healthy"' ] && break
               sleep 5
             done
-            if ! curl -fsS http://localhost:80/actuator/health >/dev/null; then
-              echo "Live container failed. Rolling back to validated blue on 80."
+            if [ "$LStatus" != '"healthy"' ]; then
+              echo "Live container failed HEALTHCHECK on 80. Logs:"
+              docker logs --tail=200 "$APP_NAME" || true
+              # Leave blue running for diagnosis; remove broken live
               docker rm -f "$APP_NAME" || true
-              docker rm -f "$NEW_NAME" || true
-              docker run -d \
-                --name "$APP_NAME" \
-                -p 80:8080 \
-                --restart always \
-                -e SPRING_PROFILES_ACTIVE=prod \
-                -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
-                "$IMAGE"
-              sleep 10
-              curl -fsS http://localhost:80/actuator/health >/dev/null || (docker logs --tail=200 "$APP_NAME" || true; exit 1)
+              exit 1
             fi
 
-            # Drop temp and clean old images
+            # Final external sanity ping
+            curl -fsS http://localhost:80/actuator/health >/dev/null || (docker logs --tail=200 "$APP_NAME" || true; exit 1)
+
+            # Success: drop temp and clean old images
             docker rm -f "$NEW_NAME" || true
             docker image prune -f || true

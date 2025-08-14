@@ -14,11 +14,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
- * Seeds a small dataset for local/demo environments.
- * Controlled by env var APP_SEED_ENABLED (default true).
- * Safe to re-run (won’t duplicate cities/airports; flights seeded only if table empty).
+ * Demo seed that is SAFE to re-run.
+ * - APP_SEED_ENABLED (default true) toggles seeding.
+ * - Backfills legacy rows:
+ *      * Airports with null portId (matched by name).
+ *      * Flights with null times/airline/duration/distance.
  */
 @Configuration
 public class SeedDataRunner {
@@ -38,8 +41,7 @@ public class SeedDataRunner {
         return args -> {
             if (!seedEnabled()) return;
 
-            // ---------- Cities & Airports ----------
-            // code (IATA), airport name, city name, country code (stored in City.province for now)
+            // -------- Seed source (IATA, airportName, cityName, countryCode) --------
             List<String[]> airportsSeed = List.of(
                     new String[]{"ATL","Hartsfield–Jackson Atlanta","Atlanta","US"},
                     new String[]{"PEK","Beijing Capital","Beijing","CN"},
@@ -63,86 +65,148 @@ public class SeedDataRunner {
                     new String[]{"MAD","Madrid–Barajas","Madrid","ES"}
             );
 
-            Map<String, Airport> byCode = new HashMap<>();
+            // Quick lookups from seed
+            Map<String,String[]> seedByName =
+                    airportsSeed.stream().collect(Collectors.toMap(a -> a[1].toLowerCase(Locale.ROOT), a -> a));
+            Map<String,String[]> seedByCode =
+                    airportsSeed.stream().collect(Collectors.toMap(a -> a[0], a -> a));
 
+            // Existing DB lookups
+            List<Airport> allAirports = airportRepo.findAll();
+            Map<String,Airport> dbByPortId = allAirports.stream()
+                    .filter(a -> a.getPortId() != null)
+                    .collect(Collectors.toMap(Airport::getPortId, a -> a, (a,b) -> a));
+            Map<String,Airport> dbByName = allAirports.stream()
+                    .collect(Collectors.toMap(a -> a.getName().toLowerCase(Locale.ROOT), a -> a, (a,b) -> a));
+
+            // -------- 1) BACKFILL existing airports with null portId (match by name) --------
+            for (Airport a : allAirports) {
+                if (a.getPortId() == null) {
+                    String[] seed = seedByName.get(a.getName().toLowerCase(Locale.ROOT));
+                    if (seed != null) {
+                        a.setPortId(seed[0]); // IATA code
+                        airportRepo.save(a);
+                        dbByPortId.put(seed[0], a);
+                    }
+                }
+            }
+
+            // -------- 2) Ensure all seed airports exist (create missing) --------
             for (String[] row : airportsSeed) {
                 String code = row[0];
-                String name = row[1];
+                String apName = row[1];
                 String cityName = row[2];
                 String countryCode = row[3];
 
-                // Find or create City (using province to stash country code; population default 0)
-                City city = cityRepo.findByNameIgnoreCase(cityName).orElseGet(() -> {
-                    City c = new City();
-                    c.setName(cityName);
-                    c.setProvince(countryCode);
-                    c.setPopulation(0);
-                    return cityRepo.save(c);
-                });
-
-                // Find or create Airport by portId (IATA)
-                Airport airport = airportRepo.findByPortId(code).orElseGet(() -> {
-                    Airport ap = new Airport();
-                    ap.setPortId(code);
-                    ap.setName(name);
-                    ap.setCity(city);
-                    return airportRepo.save(ap);
-                });
-
-                // Keep existing airport in sync with seed (idempotent update)
-                boolean changed = false;
-                if (!Objects.equals(airport.getName(), name)) {
-                    airport.setName(name);
-                    changed = true;
-                }
-                if (airport.getPortId() == null || !Objects.equals(airport.getPortId(), code)) {
-                    airport.setPortId(code);
-                    changed = true;
-                }
-                if (airport.getCity() == null || !Objects.equals(airport.getCity().getId(), city.getId())) {
-                    airport.setCity(city);
-                    changed = true;
-                }
-                if (changed) airportRepo.save(airport);
-
-                byCode.put(code, airport);
-            }
-
-            // ---------- Flights ----------
-            if (flightRepo.count() == 0) {
-                List<Airport> airports = new ArrayList<>(byCode.values());
-                if (airports.size() >= 2) {
-                    Random rnd = new Random(42);
-                    List<Flight> flights = new ArrayList<>(40);
-
-                    for (int i = 0; i < 40; i++) {
-                        Airport from = airports.get(rnd.nextInt(airports.size()));
-                        Airport to;
-                        do {
-                            to = airports.get(rnd.nextInt(airports.size()));
-                        } while (Objects.equals(from.getId(), to.getId()));
-
-                        LocalDateTime dep = LocalDateTime.now().plusHours(rnd.nextInt(72));
-                        int duration = 90 + rnd.nextInt(300); // 1.5h–6.5h
-                        LocalDateTime arr = dep.plusMinutes(duration);
-
-                        Flight f = new Flight();
-                        f.setAirline("XX"); // demo carrier
-                        f.setFlightNumber("XX" + (1000 + i));
-                        f.setDepartureAirport(from);
-                        f.setArrivalAirport(to);
-                        f.setScheduledDeparture(dep);
-                        f.setScheduledArrival(arr);
-                        f.setStatus(FlightStatus.SCHEDULED);
-                        f.setDurationMinutes(duration);
-                        f.setDistanceKm(500 + rnd.nextInt(9000)); // rough demo distance
-
-                        flights.add(f);
+                Airport existing = dbByPortId.get(code);
+                if (existing == null) {
+                    // Try to attach to an existing airport by name, otherwise create new.
+                    Airport byName = dbByName.get(apName.toLowerCase(Locale.ROOT));
+                    if (byName != null) {
+                        if (byName.getPortId() == null || !code.equals(byName.getPortId())) {
+                            byName.setPortId(code);
+                        }
+                        syncCity(byName, cityName, countryCode, cityRepo);
+                        airportRepo.save(byName);
+                        dbByPortId.put(code, byName);
+                        continue;
                     }
 
-                    flightRepo.saveAll(flights);
+                    // Create fresh
+                    City city = cityRepo.findByNameIgnoreCase(cityName).orElseGet(() -> {
+                        City c = new City();
+                        c.setName(cityName);
+                        c.setProvince(countryCode); // stash country code here
+                        c.setPopulation(0);
+                        return cityRepo.save(c);
+                    });
+
+                    Airport ap = new Airport();
+                    ap.setName(apName);
+                    ap.setPortId(code);
+                    ap.setCity(city);
+                    airportRepo.save(ap);
+
+                    dbByPortId.put(code, ap);
+                    dbByName.put(apName.toLowerCase(Locale.ROOT), ap);
+                } else {
+                    // Keep name/city in sync with seed
+                    boolean changed = false;
+                    if (!Objects.equals(existing.getName(), apName)) {
+                        existing.setName(apName);
+                        changed = true;
+                    }
+                    changed |= syncCity(existing, cityName, countryCode, cityRepo);
+                    if (changed) airportRepo.save(existing);
                 }
             }
+
+            // Refresh airport list for flight generation
+            allAirports = airportRepo.findAll();
+
+            // -------- 3) BACKFILL legacy flights (null times/airline/duration/distance) --------
+            List<Flight> existingFlights = flightRepo.findAll();
+            if (!existingFlights.isEmpty()) {
+                Random rnd = new Random(4242);
+                for (Flight f : existingFlights) {
+                    if (f.getAirline() == null) f.setAirline("XX");
+                    if (f.getDurationMinutes() == null) f.setDurationMinutes(90 + rnd.nextInt(300));
+                    if (f.getDistanceKm() == null) f.setDistanceKm(500 + rnd.nextInt(9000));
+                    if (f.getScheduledDeparture() == null || f.getScheduledArrival() == null) {
+                        LocalDateTime dep = LocalDateTime.now().plusHours(rnd.nextInt(72));
+                        LocalDateTime arr = dep.plusMinutes(f.getDurationMinutes());
+                        f.setScheduledDeparture(dep);
+                        f.setScheduledArrival(arr);
+                    }
+                    if (f.getStatus() == null) f.setStatus(FlightStatus.SCHEDULED);
+                }
+                flightRepo.saveAll(existingFlights);
+            }
+
+            // -------- 4) Seed demo flights ONLY if table empty --------
+            if (existingFlights.isEmpty() && allAirports.size() >= 2) {
+                Random rnd = new Random(42);
+                List<Flight> flights = new ArrayList<>(40);
+                for (int i = 0; i < 40; i++) {
+                    Airport from = allAirports.get(rnd.nextInt(allAirports.size()));
+                    Airport to;
+                    do { to = allAirports.get(rnd.nextInt(allAirports.size())); }
+                    while (Objects.equals(from.getId(), to.getId()));
+
+                    int duration = 90 + rnd.nextInt(300);
+                    LocalDateTime dep = LocalDateTime.now().plusHours(rnd.nextInt(72));
+                    LocalDateTime arr = dep.plusMinutes(duration);
+
+                    Flight f = new Flight();
+                    f.setAirline("XX");
+                    f.setFlightNumber("XX" + (1000 + i));
+                    f.setDepartureAirport(from);
+                    f.setArrivalAirport(to);
+                    f.setScheduledDeparture(dep);
+                    f.setScheduledArrival(arr);
+                    f.setStatus(FlightStatus.SCHEDULED);
+                    f.setDurationMinutes(duration);
+                    f.setDistanceKm(500 + rnd.nextInt(9000));
+                    flights.add(f);
+                }
+                flightRepo.saveAll(flights);
+            }
         };
+    }
+
+    /** Ensure city attached and aligned with seed; return true if airport changed. */
+    private boolean syncCity(Airport ap, String cityName, String countryCode, CityRepository cityRepo) {
+        City city = cityRepo.findByNameIgnoreCase(cityName).orElseGet(() -> {
+            City c = new City();
+            c.setName(cityName);
+            c.setProvince(countryCode);
+            c.setPopulation(0);
+            return cityRepo.save(c);
+        });
+        if (ap.getCity() == null || !Objects.equals(ap.getCity().getId(), city.getId())) {
+            ap.setCity(city);
+            return true;
+        }
+        return false;
     }
 }

@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Set;
 
 @RestController
-@RequestMapping("/passengers")
+@RequestMapping({"/passengers", "/api/passengers"}) // support both base paths
 public class PassengerController {
 
     private final PassengerService passengerService;
@@ -26,6 +26,8 @@ public class PassengerController {
         this.passengerService = passengerService;
         this.airportService = airportService;
     }
+
+    /* --------------------------- CRUD --------------------------- */
 
     @GetMapping
     public List<Passenger> getAllPassengers() {
@@ -39,13 +41,23 @@ public class PassengerController {
         return p;
     }
 
-    // POST /api/passengers?cityId=1
+    /**
+     * Create a passenger.
+     * Accepts either:
+     *   - query param ?cityId=123
+     *   - or JSON body with {"city":{"id":123}} (if your entity allows it)
+     */
     @PostMapping
     public ResponseEntity<Passenger> addPassenger(@RequestBody Passenger passenger,
-                                                  @RequestParam Long cityId,
+                                                  @RequestParam(name = "cityId", required = false) Long cityId,
                                                   UriComponentsBuilder uri) {
+        // If city wasn't passed as query param, try to read from JSON body (if available)
+        if (cityId == null && passenger.getCity() != null) {
+            cityId = passenger.getCity().getId();
+        }
+
         Passenger saved = passengerService.addPassenger(passenger, cityId);
-        URI location = uri.path("/api/passengers/{id}").buildAndExpand(saved.getId()).toUri();
+        URI location = uri.path("/passengers/{id}").buildAndExpand(saved.getId()).toUri();
         return ResponseEntity.created(location).body(saved);
     }
 
@@ -65,6 +77,9 @@ public class PassengerController {
         return passengerService.patchPassenger(id, p);
     }
 
+    /* ------------------------ Relationships ------------------------ */
+
+    // Aircraft flown by passenger
     @GetMapping("/{id}/aircraft")
     public Set<Aircraft> getAircraftFlown(@PathVariable Long id) {
         Passenger p = passengerService.getPassenger(id);
@@ -78,6 +93,7 @@ public class PassengerController {
         return ResponseEntity.noContent().build();
     }
 
+    // Airports associated with passenger
     @GetMapping("/{id}/airports")
     public Set<Airport> getAirportForPassenger(@PathVariable Long id) {
         Passenger p = passengerService.getPassenger(id);
@@ -85,7 +101,8 @@ public class PassengerController {
         return p.getAirports();
     }
 
-    @PatchMapping("/{passengerId}/airports/{airportId}")
+    // Idempotent add
+    @PutMapping("/{passengerId}/airports/{airportId}")
     public ResponseEntity<Void> addAirportToPassenger(@PathVariable Long passengerId,
                                                       @PathVariable Long airportId) {
         Passenger passenger = passengerService.getPassenger(passengerId);
@@ -95,6 +112,21 @@ public class PassengerController {
         if (airport == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Airport not found");
 
         passenger.getAirports().add(airport);
+        passengerService.savePassenger(passenger);
+        return ResponseEntity.noContent().build();
+    }
+
+    // Optional: remove mapping
+    @DeleteMapping("/{passengerId}/airports/{airportId}")
+    public ResponseEntity<Void> removeAirportFromPassenger(@PathVariable Long passengerId,
+                                                           @PathVariable Long airportId) {
+        Passenger passenger = passengerService.getPassenger(passengerId);
+        if (passenger == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Passenger not found");
+
+        Airport airport = airportService.getAirport(airportId);
+        if (airport == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Airport not found");
+
+        passenger.getAirports().remove(airport);
         passengerService.savePassenger(passenger);
         return ResponseEntity.noContent().build();
     }

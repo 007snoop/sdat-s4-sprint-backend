@@ -13,9 +13,10 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.net.URI;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/aircraft") // final path becomes /api/aircraft if you set server.servlet.context-path=/api
+@RequestMapping({"/aircraft", "/api/aircraft"})
 public class AircraftController {
 
     private final AircraftService aircraftService;
@@ -24,23 +25,47 @@ public class AircraftController {
         this.aircraftService = aircraftService;
     }
 
+    // Minimal DTO to avoid JSON recursion/lazy issues
+    public static class AircraftDto {
+        public Long id;
+        public String type;
+        public String airlineName;
+        public int numOfPassengers;
+
+        public static AircraftDto from(Aircraft a) {
+            AircraftDto d = new AircraftDto();
+            d.id = a.getId();
+            d.type = a.getType();
+            d.airlineName = a.getAirlineName();
+            d.numOfPassengers = a.getNumOfPassengers();
+            return d;
+        }
+    }
+
     @GetMapping
-    public List<Aircraft> getAllAircraft() {
-        return aircraftService.getAllAircraft();
+    public List<AircraftDto> getAllAircraft() {
+        return aircraftService.getAllAircraft().stream()
+                .map(AircraftDto::from)
+                .collect(Collectors.toList());
     }
 
     @GetMapping("/{id}")
-    public Aircraft getAircraft(@PathVariable Long id) {
+    public AircraftDto getAircraft(@PathVariable Long id) {
         Aircraft a = aircraftService.getAircraft(id);
         if (a == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Aircraft not found");
-        return a;
+        return AircraftDto.from(a);
+    }
+
+    @GetMapping("/count")
+    public long count() {
+        return aircraftService.getAllAircraft().size();
     }
 
     @PostMapping
-    public ResponseEntity<Aircraft> addAircraft(@RequestBody Aircraft a, UriComponentsBuilder uri) {
+    public ResponseEntity<AircraftDto> addAircraft(@RequestBody Aircraft a, UriComponentsBuilder uri) {
         Aircraft saved = aircraftService.addAircraft(a);
-        URI location = uri.path("/api/aircraft/{id}").buildAndExpand(saved.getId()).toUri();
-        return ResponseEntity.created(location).body(saved);
+        URI location = uri.path("/aircraft/{id}").buildAndExpand(saved.getId()).toUri();
+        return ResponseEntity.created(location).body(AircraftDto.from(saved));
     }
 
     @DeleteMapping("/{id}")
@@ -50,16 +75,16 @@ public class AircraftController {
     }
 
     @PutMapping("/{id}")
-    public Aircraft updateAircraft(@PathVariable Long id, @RequestBody Aircraft a) {
-        return aircraftService.updateAircraft(id, a);
+    public AircraftDto updateAircraft(@PathVariable Long id, @RequestBody Aircraft a) {
+        return AircraftDto.from(aircraftService.updateAircraft(id, a));
     }
 
     @PatchMapping("/{id}")
-    public Aircraft patchAircraft(@PathVariable Long id, @RequestBody Aircraft p) {
-        return aircraftService.patchAircraft(id, p);
+    public AircraftDto patchAircraft(@PathVariable Long id, @RequestBody Aircraft p) {
+        return AircraftDto.from(aircraftService.patchAircraft(id, p));
     }
 
-    // Idempotent relation add: PUT /api/aircraft/{acId}/airports/{apId}
+    // Relations (kept as-is)
     @PutMapping("/{acId}/airports/{apId}")
     public ResponseEntity<Void> addAptoAc(@PathVariable Long acId, @PathVariable Long apId) {
         aircraftService.addAirportToAircraft(acId, apId);

@@ -18,7 +18,7 @@ import java.util.*;
 /**
  * Seeds a small dataset for local/demo environments.
  * Controlled by env var APP_SEED_ENABLED (default true).
- * Safe to re-run (won’t duplicate cities/airports).
+ * Safe to re-run (won’t duplicate cities/airports; flights seeded only if table empty).
  */
 @Configuration
 public class SeedDataRunner {
@@ -39,7 +39,7 @@ public class SeedDataRunner {
             if (!seedEnabled()) return;
 
             // ---------- Cities & Airports ----------
-            // code, name, city, countryCode (countryCode stored in City.province for now)
+            // code (IATA), airport name, city name, country code (stored in City.province for now)
             List<String[]> airportsSeed = List.of(
                     new String[]{"ATL","Hartsfield–Jackson Atlanta","Atlanta","US"},
                     new String[]{"PEK","Beijing Capital","Beijing","CN"},
@@ -64,13 +64,14 @@ public class SeedDataRunner {
             );
 
             Map<String, Airport> byCode = new HashMap<>();
+
             for (String[] row : airportsSeed) {
                 String code = row[0];
                 String name = row[1];
                 String cityName = row[2];
                 String countryCode = row[3];
 
-                // City: find or create (province = country code, population default 0)
+                // Find or create City (using province to stash country code; population default 0)
                 City city = cityRepo.findByNameIgnoreCase(cityName).orElseGet(() -> {
                     City c = new City();
                     c.setName(cityName);
@@ -79,7 +80,7 @@ public class SeedDataRunner {
                     return cityRepo.save(c);
                 });
 
-                // Airport: find by portId (code) or create
+                // Find or create Airport by portId (IATA)
                 Airport airport = airportRepo.findByPortId(code).orElseGet(() -> {
                     Airport ap = new Airport();
                     ap.setPortId(code);
@@ -88,10 +89,14 @@ public class SeedDataRunner {
                     return airportRepo.save(ap);
                 });
 
-                // If existing, keep name/city in sync (idempotent updates)
+                // Keep existing airport in sync with seed (idempotent update)
                 boolean changed = false;
                 if (!Objects.equals(airport.getName(), name)) {
                     airport.setName(name);
+                    changed = true;
+                }
+                if (airport.getPortId() == null || !Objects.equals(airport.getPortId(), code)) {
+                    airport.setPortId(code);
                     changed = true;
                 }
                 if (airport.getCity() == null || !Objects.equals(airport.getCity().getId(), city.getId())) {
@@ -108,7 +113,7 @@ public class SeedDataRunner {
                 List<Airport> airports = new ArrayList<>(byCode.values());
                 if (airports.size() >= 2) {
                     Random rnd = new Random(42);
-                    List<Flight> flights = new ArrayList<>();
+                    List<Flight> flights = new ArrayList<>(40);
 
                     for (int i = 0; i < 40; i++) {
                         Airport from = airports.get(rnd.nextInt(airports.size()));
@@ -122,7 +127,7 @@ public class SeedDataRunner {
                         LocalDateTime arr = dep.plusMinutes(duration);
 
                         Flight f = new Flight();
-                        f.setAirline("XX"); // demo
+                        f.setAirline("XX"); // demo carrier
                         f.setFlightNumber("XX" + (1000 + i));
                         f.setDepartureAirport(from);
                         f.setArrivalAirport(to);
@@ -130,7 +135,7 @@ public class SeedDataRunner {
                         f.setScheduledArrival(arr);
                         f.setStatus(FlightStatus.SCHEDULED);
                         f.setDurationMinutes(duration);
-                        f.setDistanceKm(500 + rnd.nextInt(9000)); // rough demo value
+                        f.setDistanceKm(500 + rnd.nextInt(9000)); // rough demo distance
 
                         flights.add(f);
                     }

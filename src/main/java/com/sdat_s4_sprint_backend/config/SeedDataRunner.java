@@ -1,123 +1,142 @@
 package com.sdat_s4_sprint_backend.config;
 
 import com.sdat_s4_sprint_backend.entity.Airport;
+import com.sdat_s4_sprint_backend.entity.City;
 import com.sdat_s4_sprint_backend.entity.Flight;
 import com.sdat_s4_sprint_backend.entity.FlightStatus;
 import com.sdat_s4_sprint_backend.repos.AirportRepository;
+import com.sdat_s4_sprint_backend.repos.CityRepository;
 import com.sdat_s4_sprint_backend.repos.FlightRepository;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * Seeds a small dataset for local/demo environments.
+ * Controlled by env var APP_SEED_ENABLED (default true).
+ * Safe to re-run (won’t duplicate cities/airports).
+ */
 @Configuration
 public class SeedDataRunner {
 
-    // Toggle with env APP_SEED_ENABLED=true (default true). Seeds only when tables empty.
     private boolean seedEnabled() {
         String v = System.getenv("APP_SEED_ENABLED");
         return v == null || Boolean.parseBoolean(v);
     }
 
-    // Try a list of setter names; skip silently if not present
-    private static boolean trySet(Object target, Object value, String... setterNames) {
-        for (String name : setterNames) {
-            for (Method m : target.getClass().getMethods()) {
-                if (!m.getName().equals(name) || m.getParameterCount() != 1) continue;
-                Class<?> p = m.getParameterTypes()[0];
-                try {
-                    if (value == null || p.isAssignableFrom(value.getClass())) {
-                        m.invoke(target, value);
-                        return true;
-                    }
-                    if (p == int.class && value instanceof Number n) { m.invoke(target, n.intValue()); return true; }
-                    if (p == long.class && value instanceof Number n) { m.invoke(target, n.longValue()); return true; }
-                    if (p == double.class && value instanceof Number n) { m.invoke(target, n.doubleValue()); return true; }
-                } catch (Exception ignore) {}
-            }
-        }
-        return false;
-    }
-
     @Bean
-    ApplicationRunner seed(AirportRepository airportRepo, FlightRepository flightRepo) {
+    @Transactional
+    public ApplicationRunner seed(
+            CityRepository cityRepo,
+            AirportRepository airportRepo,
+            FlightRepository flightRepo
+    ) {
         return args -> {
             if (!seedEnabled()) return;
 
-            if (airportRepo.count() == 0) {
-                // code, name, city, country
-                List<String[]> data = List.of(
-                        new String[]{"ATL","Hartsfield–Jackson Atlanta","Atlanta","US"},
-                        new String[]{"PEK","Beijing Capital","Beijing","CN"},
-                        new String[]{"LAX","Los Angeles Intl","Los Angeles","US"},
-                        new String[]{"DXB","Dubai Intl","Dubai","AE"},
-                        new String[]{"HND","Tokyo Haneda","Tokyo","JP"},
-                        new String[]{"ORD","O'Hare Intl","Chicago","US"},
-                        new String[]{"LHR","Heathrow","London","GB"},
-                        new String[]{"CDG","Charles de Gaulle","Paris","FR"},
-                        new String[]{"DFW","Dallas/Fort Worth","Dallas","US"},
-                        new String[]{"AMS","Schiphol","Amsterdam","NL"},
-                        new String[]{"FRA","Frankfurt","Frankfurt","DE"},
-                        new String[]{"IST","Istanbul","Istanbul","TR"},
-                        new String[]{"SIN","Changi","Singapore","SG"},
-                        new String[]{"ICN","Incheon","Seoul","KR"},
-                        new String[]{"SFO","San Francisco Intl","San Francisco","US"},
-                        new String[]{"JFK","John F. Kennedy","New York","US"},
-                        new String[]{"MEX","Benito Juárez","Mexico City","MX"},
-                        new String[]{"GRU","Guarulhos","São Paulo","BR"},
-                        new String[]{"BCN","Barcelona","Barcelona","ES"},
-                        new String[]{"MAD","Madrid–Barajas","Madrid","ES"}
-                );
+            // ---------- Cities & Airports ----------
+            // code, name, city, countryCode (countryCode stored in City.province for now)
+            List<String[]> airportsSeed = List.of(
+                    new String[]{"ATL","Hartsfield–Jackson Atlanta","Atlanta","US"},
+                    new String[]{"PEK","Beijing Capital","Beijing","CN"},
+                    new String[]{"LAX","Los Angeles Intl","Los Angeles","US"},
+                    new String[]{"DXB","Dubai Intl","Dubai","AE"},
+                    new String[]{"HND","Tokyo Haneda","Tokyo","JP"},
+                    new String[]{"ORD","O'Hare Intl","Chicago","US"},
+                    new String[]{"LHR","Heathrow","London","GB"},
+                    new String[]{"CDG","Charles de Gaulle","Paris","FR"},
+                    new String[]{"DFW","Dallas/Fort Worth","Dallas","US"},
+                    new String[]{"AMS","Schiphol","Amsterdam","NL"},
+                    new String[]{"FRA","Frankfurt","Frankfurt","DE"},
+                    new String[]{"IST","Istanbul","Istanbul","TR"},
+                    new String[]{"SIN","Changi","Singapore","SG"},
+                    new String[]{"ICN","Incheon","Seoul","KR"},
+                    new String[]{"SFO","San Francisco Intl","San Francisco","US"},
+                    new String[]{"JFK","John F. Kennedy","New York","US"},
+                    new String[]{"MEX","Benito Juárez","Mexico City","MX"},
+                    new String[]{"GRU","Guarulhos","São Paulo","BR"},
+                    new String[]{"BCN","Barcelona","Barcelona","ES"},
+                    new String[]{"MAD","Madrid–Barajas","Madrid","ES"}
+            );
 
-                List<Airport> toSave = new ArrayList<>();
-                for (String[] a : data) {
-                    Airport ap = new Airport(); // << concrete entity, not Object
-                    trySet(ap, a[0], "setCode", "setIata", "setIataCode", "setAirportCode");
-                    trySet(ap, a[1], "setName");
-                    trySet(ap, a[2], "setCity", "setCityName");
-                    trySet(ap, a[3], "setCountry", "setCountryCode");
-                    toSave.add(ap);
+            Map<String, Airport> byCode = new HashMap<>();
+            for (String[] row : airportsSeed) {
+                String code = row[0];
+                String name = row[1];
+                String cityName = row[2];
+                String countryCode = row[3];
+
+                // City: find or create (province = country code, population default 0)
+                City city = cityRepo.findByNameIgnoreCase(cityName).orElseGet(() -> {
+                    City c = new City();
+                    c.setName(cityName);
+                    c.setProvince(countryCode);
+                    c.setPopulation(0);
+                    return cityRepo.save(c);
+                });
+
+                // Airport: find by portId (code) or create
+                Airport airport = airportRepo.findByPortId(code).orElseGet(() -> {
+                    Airport ap = new Airport();
+                    ap.setPortId(code);
+                    ap.setName(name);
+                    ap.setCity(city);
+                    return airportRepo.save(ap);
+                });
+
+                // If existing, keep name/city in sync (idempotent updates)
+                boolean changed = false;
+                if (!Objects.equals(airport.getName(), name)) {
+                    airport.setName(name);
+                    changed = true;
                 }
-                airportRepo.saveAll(toSave);
+                if (airport.getCity() == null || !Objects.equals(airport.getCity().getId(), city.getId())) {
+                    airport.setCity(city);
+                    changed = true;
+                }
+                if (changed) airportRepo.save(airport);
+
+                byCode.put(code, airport);
             }
 
+            // ---------- Flights ----------
             if (flightRepo.count() == 0) {
-                List<Airport> airports = airportRepo.findAll();
-                if (airports.size() < 2) return;
+                List<Airport> airports = new ArrayList<>(byCode.values());
+                if (airports.size() >= 2) {
+                    Random rnd = new Random(42);
+                    List<Flight> flights = new ArrayList<>();
 
-                Random rnd = new Random(42);
-                List<Flight> flights = new ArrayList<>();
+                    for (int i = 0; i < 40; i++) {
+                        Airport from = airports.get(rnd.nextInt(airports.size()));
+                        Airport to;
+                        do {
+                            to = airports.get(rnd.nextInt(airports.size()));
+                        } while (Objects.equals(from.getId(), to.getId()));
 
-                for (int i = 0; i < 40; i++) {
-                    Flight f = new Flight(); // << concrete entity
+                        LocalDateTime dep = LocalDateTime.now().plusHours(rnd.nextInt(72));
+                        int duration = 90 + rnd.nextInt(300); // 1.5h–6.5h
+                        LocalDateTime arr = dep.plusMinutes(duration);
 
-                    // identifiers / number
-                    trySet(f, "FL" + (1000 + i), "setCode", "setFlightCode", "setNumber", "setFlightNumber");
+                        Flight f = new Flight();
+                        f.setAirline("XX"); // demo
+                        f.setFlightNumber("XX" + (1000 + i));
+                        f.setDepartureAirport(from);
+                        f.setArrivalAirport(to);
+                        f.setScheduledDeparture(dep);
+                        f.setScheduledArrival(arr);
+                        f.setStatus(FlightStatus.SCHEDULED);
+                        f.setDurationMinutes(duration);
+                        f.setDistanceKm(500 + rnd.nextInt(9000)); // rough demo value
 
-                    // from / to
-                    Airport from = airports.get(rnd.nextInt(airports.size()));
-                    Airport to;
-                    do { to = airports.get(rnd.nextInt(airports.size())); } while (Objects.equals(from.getId(), to.getId()));
+                        flights.add(f);
+                    }
 
-                    trySet(f, from, "setFromAirport", "setOrigin", "setSourceAirport", "setDepartureAirport");
-                    trySet(f, to,   "setToAirport",   "setDestination", "setDestAirport", "setArrivalAirport");
-
-                    // times
-                    LocalDateTime dep = LocalDateTime.now().plusHours(rnd.nextInt(72));
-                    LocalDateTime arr = dep.plusHours(2 + rnd.nextInt(10));
-                    trySet(f, dep, "setDepartureTime", "setDepartAt", "setDepartsAt");
-                    trySet(f, arr, "setArrivalTime",   "setArriveAt",  "setArrivesAt");
-
-                    // status
-                    boolean setEnum = trySet(f, FlightStatus.SCHEDULED, "setStatus");
-                    if (!setEnum) trySet(f, "SCHEDULED", "setStatus", "setState");
-
-                    flights.add(f);
+                    flightRepo.saveAll(flights);
                 }
-                flightRepo.saveAll(flights);
             }
         };
     }

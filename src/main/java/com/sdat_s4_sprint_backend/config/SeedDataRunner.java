@@ -58,15 +58,47 @@ public class SeedDataRunner {
 
             seedAirportsAndCities(airportsSeed, airportRepo, cityRepo);
 
-            /* -------------------- AIRCRAFT -------------------- */
-            List<Object[]> aircraftSeed = List.of(
-                    new Object[]{"C-FABC", "A320-200", "Airbus", 180},
-                    new Object[]{"N12345", "B737-800", "Boeing", 172},
-                    new Object[]{"G-ABCD", "A321neo", "Airbus", 220},
-                    new Object[]{"D-EF12", "E190", "Embraer", 114},
-                    new Object[]{"JA777A", "B777-300ER", "Boeing", 396}
-            );
-            seedAircraft(aircraftSeed, aircraftRepo);
+            /* -------------------- AIRCRAFT: backfill + seed -------------------- */
+            // 1) Backfill any existing aircraft rows (fill airlineName / numOfPassengers)
+            List<Aircraft> existingAircraft = aircraftRepo.findAll();
+            if (!existingAircraft.isEmpty()) {
+                String[] airlines = {"Airways One", "SkyJet", "EuroFly", "Regional Air", "Pacific Lines"};
+                Random rnd = new Random(77);
+                for (Aircraft a : existingAircraft) {
+                    if (a.getAirlineName() == null || a.getAirlineName().isBlank()) {
+                        a.setAirlineName(airlines[rnd.nextInt(airlines.length)]);
+                    }
+                    if (a.getNumOfPassengers() <= 0) {
+                        a.setNumOfPassengers(guessCapacityByType(a.getType()));
+                    }
+                }
+                aircraftRepo.saveAll(existingAircraft);
+            }
+
+            // 2) Seed demo aircraft if table is empty
+            if (existingAircraft.isEmpty()) {
+                List<Object[]> seed = List.of(
+                        new Object[]{"A320-200", "Airways One", 180},
+                        new Object[]{"B737-800", "SkyJet", 172},
+                        new Object[]{"A321neo", "EuroFly", 220},
+                        new Object[]{"E190", "Regional Air", 114},
+                        new Object[]{"B777-300ER", "Pacific Lines", 396}
+                );
+                Random rnd = new Random(7);
+                List<Airport> aps = airportRepo.findAll();
+                List<Aircraft> toSave = new ArrayList<>();
+                for (Object[] r : seed) {
+                    Aircraft a = new Aircraft();
+                    a.setType((String) r[0]);
+                    a.setAirlineName((String) r[1]);
+                    a.setNumOfPassengers((Integer) r[2]);
+                    if (!aps.isEmpty()) {
+                        a.getAirports().add(aps.get(rnd.nextInt(aps.size()))); // optional link
+                    }
+                    toSave.add(a);
+                }
+                aircraftRepo.saveAll(toSave);
+            }
 
             /* -------------------- PASSENGERS -------------------- */
             List<Object[]> paxSeed = List.of(
@@ -84,14 +116,13 @@ public class SeedDataRunner {
         };
     }
 
-    /* ================================== AIRPORTS ================================== */
+    /* ============================ helpers: airports/cities ============================ */
 
     private void seedAirportsAndCities(
             List<String[]> airportsSeed,
             AirportRepository airportRepo,
             CityRepository cityRepo
     ) {
-        // Build quick in-DB lookups (case-insensitive name map)
         List<Airport> all = airportRepo.findAll();
         Map<String, Airport> byCode = all.stream()
                 .filter(a -> a.getPortId() != null)
@@ -99,7 +130,6 @@ public class SeedDataRunner {
         Map<String, Airport> byName = all.stream()
                 .collect(Collectors.toMap(a -> a.getName().toLowerCase(Locale.ROOT), a -> a, (a,b)->a));
 
-        // Backfill any existing airports missing portId using name match
         for (Airport a : all) {
             if (a.getPortId() == null) {
                 airportsSeed.stream()
@@ -113,7 +143,6 @@ public class SeedDataRunner {
             }
         }
 
-        // Ensure each seed airport exists exactly once (idempotent)
         for (String[] row : airportsSeed) {
             String code = row[0];
             String name = row[1];
@@ -148,7 +177,7 @@ public class SeedDataRunner {
         return cityRepo.findByNameIgnoreCase(name).orElseGet(() -> {
             City c = new City();
             c.setName(name);
-            c.setProvince(countryCode); // stash country in province for now
+            c.setProvince(countryCode);
             c.setPopulation(0);
             return cityRepo.save(c);
         });
@@ -169,7 +198,6 @@ public class SeedDataRunner {
                 .findFirst().orElse(null);
     }
 
-    /** Ensure city attached and aligned with seed; return true if airport changed. */
     private boolean syncCity(Airport ap, String cityName, String countryCode, CityRepository cityRepo) {
         City city = requeryOrCreateCity(cityRepo, cityName, countryCode);
         if (ap.getCity() == null || !Objects.equals(ap.getCity().getId(), city.getId())) {
@@ -179,76 +207,13 @@ public class SeedDataRunner {
         return false;
     }
 
-    /* ================================== AIRCRAFT ================================== */
-
-    private void seedAircraft(List<Object[]> aircraftSeed, AircraftRepository aircraftRepo) {
-        // build existing registrations from DB using flexible getters
-        Map<String, Aircraft> byReg = new HashMap<>();
-        for (Aircraft a : aircraftRepo.findAll()) {
-            String reg = firstNonNull(
-                    getStringProp(a, "getRegistration"),
-                    getStringProp(a, "getTailNumber"),
-                    getStringProp(a, "getCode")
-            );
-            if (reg != null) byReg.put(reg.toUpperCase(Locale.ROOT), a);
-        }
-
-        for (Object[] row : aircraftSeed) {
-            String reg = ((String) row[0]).toUpperCase(Locale.ROOT);
-            String model = (String) row[1];
-            String maker = (String) row[2];
-            Integer cap = (Integer) row[3];
-
-            Aircraft existing = byReg.get(reg);
-            if (existing == null) {
-                // re-check DB just before insert (helps when multiple instances start)
-                existing = aircraftRepo.findAll().stream()
-                        .filter(a -> reg.equalsIgnoreCase(
-                                firstNonNull(getStringProp(a, "getRegistration"),
-                                        getStringProp(a, "getTailNumber"),
-                                        getStringProp(a, "getCode"))))
-                        .findFirst().orElse(null);
-            }
-
-            if (existing == null) {
-                Aircraft a = new Aircraft();
-                setIfPresent(a, "setRegistration", String.class, reg);
-                setIfPresent(a, "setTailNumber", String.class, reg); // alt
-                setIfPresent(a, "setCode", String.class, reg);       // alt
-
-                setIfPresent(a, "setModel", String.class, model);
-                setIfPresent(a, "setType", String.class, model);     // alt
-                setIfPresent(a, "setAircraftModel", String.class, model);
-
-                setIfPresent(a, "setManufacturer", String.class, maker);
-                setIfPresent(a, "setMaker", String.class, maker);    // alt
-
-                setIfPresent(a, "setCapacity", Integer.class, cap);
-                setIfPresent(a, "setSeats", Integer.class, cap);     // alt
-
-                aircraftRepo.save(a);
-                byReg.put(reg, a);
-            } else {
-                boolean changed = false;
-                changed |= setIfChanged(existing, "setModel", String.class, model, "getModel");
-                changed |= setIfChanged(existing, "setType", String.class, model, "getType");
-                changed |= setIfChanged(existing, "setManufacturer", String.class, maker, "getManufacturer");
-                changed |= setIfChanged(existing, "setMaker", String.class, maker, "getMaker");
-                changed |= setIfChanged(existing, "setCapacity", Integer.class, cap, "getCapacity");
-                changed |= setIfChanged(existing, "setSeats", Integer.class, cap, "getSeats");
-                if (changed) aircraftRepo.save(existing);
-            }
-        }
-    }
-
-    /* ================================== PASSENGERS ================================== */
+    /* ============================== helpers: passengers ============================== */
 
     private void seedPassengers(
             List<Object[]> paxSeed,
             PassengerRepository passengerRepo,
             AirportRepository airportRepo
     ) {
-        // Build existing emails/usernames
         Map<String, Passenger> byEmail = new HashMap<>();
         for (Passenger p : passengerRepo.findAll()) {
             String email = firstNonNull(getStringProp(p, "getEmail"),
@@ -281,7 +246,6 @@ public class SeedDataRunner {
                 setIfPresent(p, "setEmail", String.class, email);
                 setIfPresent(p, "setUsername", String.class, email);
 
-                // Optionally attach to 1–2 airports if the relation exists
                 try {
                     Method getter = p.getClass().getMethod("getAirports");
                     Object coll = getter.invoke(p);
@@ -293,7 +257,6 @@ public class SeedDataRunner {
                         }
                     }
                 } catch (Exception ignored) {}
-
                 passengerRepo.save(p);
                 if (email != null) byEmail.put(email.toLowerCase(Locale.ROOT), p);
             } else {
@@ -307,7 +270,7 @@ public class SeedDataRunner {
         }
     }
 
-    /* ================================== FLIGHTS ================================== */
+    /* ================================ helpers: flights ================================ */
 
     private void backfillFlights(FlightRepository flightRepo) {
         List<Flight> flights = flightRepo.findAll();
@@ -362,7 +325,7 @@ public class SeedDataRunner {
         flightRepo.saveAll(flights);
     }
 
-    /* =============================== reflection utils =============================== */
+    /* ================================= reflection utils ================================= */
 
     private static <T> void setIfPresent(Object target, String setter, Class<T> type, T value) {
         if (value == null) return;
@@ -400,5 +363,21 @@ public class SeedDataRunner {
             }
         } catch (Exception ignored) {}
         return false;
+    }
+
+    /** Guess a reasonable seat count from the type string. */
+    private int guessCapacityByType(String type) {
+        if (type == null) return 150;
+        String t = type.toUpperCase(Locale.ROOT);
+        if (t.contains("A321")) return 220;
+        if (t.contains("A320")) return 180;
+        if (t.contains("A319")) return 144;
+        if (t.contains("B777-300")) return 396;
+        if (t.contains("B777")) return 368;
+        if (t.contains("B787-9")) return 296;
+        if (t.contains("B737-800")) return 172;
+        if (t.contains("B737")) return 160;
+        if (t.contains("E190")) return 114;
+        return 150;
     }
 }

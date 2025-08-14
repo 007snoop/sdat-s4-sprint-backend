@@ -13,6 +13,10 @@ env:
   IMAGE_TAG: ${{ github.sha }}
   DOCKER_PLATFORM: linux/amd64
 
+concurrency:
+  group: airportsim-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -40,9 +44,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-m2-
 
-      - run: chmod +x ./mvnw
       - name: Build JAR
-        run: ./mvnw clean package -DskipTests
+        run: |
+          chmod +x ./mvnw
+          ./mvnw -q clean package -DskipTests
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -87,28 +92,23 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
 
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::876455127118:role/GitHubActions-Flight-Role
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: gha-deploy-${{ github.run_id }}
-
       - name: SSH into EC2 and deploy
         uses: appleboy/ssh-action@v1.2.0
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
           ECR_URI: ${{ needs.build-and-push.outputs.ecr_uri }}
           IMAGE: ${{ needs.build-and-push.outputs.image_latest }}
+          # Customize these two for your frontend & seed policy
+          FRONTEND_ORIGINS: https://your-frontend.example.com,http://localhost:5173
+          APP_SEED_ENABLED: "true"
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: AWS_REGION,ECR_URI,IMAGE
+          envs: AWS_REGION,ECR_URI,IMAGE,FRONTEND_ORIGINS,APP_SEED_ENABLED
           script: |
             set -euo pipefail
 
@@ -125,44 +125,44 @@ jobs:
               sudo yum -y install curl || sudo dnf -y install curl
             fi
 
-            # ECR login
+            # ECR login + pull (uses EC2 instance role)
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
-
-            # Pull image
             docker pull "$IMAGE"
 
             APP_NAME="airportsim"
             NEW_NAME="airportsim_new_$RANDOM"
 
-            # Clean previous blue/green attempts
+            # Clean any leftovers
             for c in $(docker ps -a --format '{{.Names}}' | grep -E '^airportsim_new_' || true); do
               docker rm -f "$c" || true
             done
 
-            # Start candidate on 8081 (uses baked HEALTHCHECK + JVM cap)
+            # Start candidate on 8081 (HEALTHCHECK = /api/actuator/health/liveness in image)
             docker run -d \
               --name "$NEW_NAME" \
               -p 8081:8080 \
               --restart unless-stopped \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+              -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
+              -e APP_SEED_ENABLED="$APP_SEED_ENABLED" \
               "$IMAGE"
 
-            echo "Waiting for $NEW_NAME to become healthy (Docker HEALTHCHECK)..."
+            echo "Waiting for $NEW_NAME to become healthy (liveness)..."
             for i in {1..24}; do
               STATUS=$(docker inspect --format='{{json .State.Health.Status}}' "$NEW_NAME" 2>/dev/null || echo '"starting"')
-              echo "Health: $STATUS"
+              echo "Health(8081): $STATUS"
               [ "$STATUS" = '"healthy"' ] && break
               sleep 5
             done
             if [ "$STATUS" != '"healthy"' ]; then
-              echo "New container failed health check. Logs:"
+              echo "New container failed liveness health check. Logs:"
               docker logs --tail=200 "$NEW_NAME" || true
               docker rm -f "$NEW_NAME" || true
               exit 1
             fi
 
-            # Cut over to port 80 (single live container)
+            # Cut over to port 80
             docker rm -f "$APP_NAME" || true
             docker run -d \
               --name "$APP_NAME" \
@@ -170,27 +170,24 @@ jobs:
               --restart always \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+              -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
+              -e APP_SEED_ENABLED="$APP_SEED_ENABLED" \
               "$IMAGE"
 
-            # Wait for Docker HEALTHCHECK on live container (avoid 503s during warmup)
-            echo "Waiting for $APP_NAME (port 80) to become healthy (Docker HEALTHCHECK)..."
-            for i in {1..24}; do
-              LStatus=$(docker inspect --format='{{json .State.Health.Status}}' "$APP_NAME" 2>/dev/null || echo '"starting"')
-              echo "Health(80): $LStatus"
-              [ "$LStatus" = '"healthy"' ] && break
+            # Verify readiness (DB) on port 80
+            echo "Waiting for $APP_NAME (port 80) readiness..."
+            ok=false
+            for i in {1..12}; do
+              if curl -fsS http://localhost:80/api/actuator/health/readiness >/dev/null; then ok=true; break; fi
+              echo "Health(80): not ready yet"
               sleep 5
             done
-            if [ "$LStatus" != '"healthy"' ]; then
-              echo "Live container failed HEALTHCHECK on 80. Logs:"
+            if ! $ok; then
+              echo "Readiness not UP after 60s. Logs:"
               docker logs --tail=200 "$APP_NAME" || true
-              # Leave blue running for diagnosis; remove broken live
-              docker rm -f "$APP_NAME" || true
               exit 1
             fi
 
-            # Final external sanity ping
-            curl -fsS http://localhost:80/actuator/health >/dev/null || (docker logs --tail=200 "$APP_NAME" || true; exit 1)
-
-            # Success: drop temp and clean old images
+            # Cleanup
             docker rm -f "$NEW_NAME" || true
             docker image prune -f || true

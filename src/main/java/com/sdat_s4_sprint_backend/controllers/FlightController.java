@@ -1,15 +1,18 @@
 package com.sdat_s4_sprint_backend.controllers;
 
+import com.sdat_s4_sprint_backend.entity.Airport;
 import com.sdat_s4_sprint_backend.entity.Flight;
 import com.sdat_s4_sprint_backend.repos.FlightRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/flights")
+@CrossOrigin
 public class FlightController {
 
     private final FlightRepository flightRepo;
@@ -37,5 +40,21 @@ public class FlightController {
     @GetMapping("/count")
     public long count() {
         return flightRepo.count();
+    }
+
+    // === New endpoints to get airports linked to a flight ===
+
+    @GetMapping("/{id}/departure-airport")
+    public ResponseEntity<Airport> getDepartureAirport(@PathVariable Long id) {
+        return flightRepo.findById(id)
+                .map(f -> ResponseEntity.ok(f.getDepartureAirport()))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/arrival-airport")
+    public ResponseEntity<Airport> getArrivalAirport(@PathVariable Long id) {
+        return flightRepo.findById(id)
+                .map(f -> ResponseEntity.ok(f.getArrivalAirport()))
+                .orElse(ResponseEntity.notFound().build());
     }
 }

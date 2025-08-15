@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - uses: actions/cache@v3
         with:
@@ -61,6 +61,7 @@ jobs:
 
       - name: Compute ECR URI and tags
         id: meta
+        shell: bash
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "ecr_uri=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
@@ -95,18 +96,16 @@ jobs:
       contents: read
 
     steps:
-      - name: SSH into EC2 and deploy (blue/green)
+      - name: SSH into EC2 and deploy (blue/green, 8080 target)
         uses: appleboy/ssh-action@v1.2.0
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
-          ECR_URI: ${{ needs.build-and-push.outputs.ecr_uri }}
-          IMAGE: ${{ needs.build-and-push.outputs.image_latest }}
+          ECR_URI:    ${{ needs.build-and-push.outputs.ecr_uri }}
+          IMAGE:      ${{ needs.build-and-push.outputs.image_latest }}
 
-          # Frontend/CORS + seeding toggles (override via repo secrets if you want)
-          FRONTEND_ORIGINS: ${{ secrets.FRONTEND_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173' }}
+          FRONTEND_ORIGINS: ${{ secrets.FRONTEND_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,https://djyim49uad8qf.cloudfront.net' }}
           APP_SEED_ENABLED: ${{ secrets.APP_SEED_ENABLED || 'false' }}
 
-          # Optional DB envs (only needed if useAwsSecrets=false in the app)
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
           DB_NAME: ${{ secrets.DB_NAME }}
@@ -120,37 +119,19 @@ jobs:
           script: |
             set -euo pipefail
 
-            APP_NAME="airportsim"
-            NEW_NAME="airportsim_new_$RANDOM"
+            APP="airportsim"
+            BLUE="airportsim_blue_$RANDOM"
 
-            # Ensure prereqs
-            if ! command -v docker >/dev/null 2>&1; then
-              sudo yum -y install docker || sudo dnf -y install docker
-              sudo systemctl enable --now docker
-              sudo usermod -aG docker ec2-user || true
-            fi
-            if ! command -v aws >/dev/null 2>&1; then
-              sudo yum -y install awscli || sudo dnf -y install awscli
-            fi
-            if ! command -v curl >/dev/null 2>&1; then
-              sudo yum -y install curl || sudo dnf -y install curl
-            fi
+            need() { command -v "$1" >/dev/null 2>&1 || { sudo yum -y install "$1" || sudo dnf -y install "$1"; }; }
+            need docker; sudo systemctl enable --now docker || true; sudo usermod -aG docker ec2-user || true
+            need aws; need curl
 
-            # ECR login + pull (uses EC2 instance role)
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
             docker pull "$IMAGE"
 
-            # Cleanup any previous blue containers
-            for c in $(docker ps -a --format '{{.Names}}' | grep -E '^airportsim_new_' || true); do
-              docker rm -f "$c" || true
-            done
+            docker ps -a --format '{{.Names}}' | grep -E '^airportsim_blue_' && docker rm -f $(docker ps -a --format '{{.Names}}' | grep -E '^airportsim_blue_') || true
 
-            # Start candidate on 8081 (host) -> 8080 (container)
-            # Health: use curl to /actuator/health (context path = "/")
-            docker run -d \
-              --name "$NEW_NAME" \
-              -p 8081:8080 \
-              --restart unless-stopped \
+            docker run -d --name "$BLUE" -p 8081:8080 --restart unless-stopped \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
               -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
@@ -162,58 +143,43 @@ jobs:
               ${DB_PASS:+-e DB_PASS="$DB_PASS"} \
               "$IMAGE"
 
-            echo "Waiting for $NEW_NAME (port 8081) health..."
-            # Try up to ~2 minutes
-            ok=false
+            echo "Waiting for BLUE (http://localhost:8081/api/actuator/health) ..."
+            for i in {1..30}; do
+              if curl -fsS http://localhost:8081/api/actuator/health | grep -q '"status":"UP"'; then
+                echo "BLUE is healthy."; break; fi
+              echo "… still starting"; sleep 4
+              if [ "$i" -eq 30 ]; then
+                echo "BLUE failed to become healthy:"; docker logs --tail=200 "$BLUE" || true; exit 1; fi
+            done
+
+            docker rm -f "$APP" || true
+            docker run -d --name "$APP" -p 8080:8080 --restart always \
+              -e SPRING_PROFILES_ACTIVE=prod \
+              -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+              -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
+              -e APP_SEED_ENABLED="$APP_SEED_ENABLED" \
+              ${DB_HOST:+-e DB_HOST="$DB_HOST"} \
+              ${DB_PORT:+-e DB_PORT="$DB_PORT"} \
+              ${DB_NAME:+-e DB_NAME="$DB_NAME"} \
+              ${DB_USER:+-e DB_USER="$DB_USER"} \
+              ${DB_PASS:+-e DB_PASS="$DB_PASS"} \
+              "$IMAGE"
+
+            echo "Waiting for STABLE (http://localhost:8080/api/actuator/health) ..."
             for i in {1..24}; do
-              if curl -fsS http://localhost:8081/actuator/health | grep -q '"status":"UP"'; then
-                ok=true; break
-              fi
-              echo "Health(8081): starting"
-              sleep 5
+              if curl -fsS http://localhost:8080/api/actuator/health | grep -q '"status":"UP"'; then
+                echo "STABLE is healthy."; break; fi
+              echo "… not ready yet"; sleep 5
+              if [ "$i" -eq 24 ]; then
+                echo "STABLE failed to become healthy:"; docker logs --tail=200 "$APP" || true; exit 1; fi
             done
-            if ! $ok; then
-              echo "New container did not become healthy. Recent logs:"
-              docker logs --tail=200 "$NEW_NAME" || true
-              docker rm -f "$NEW_NAME" || true
-              exit 1
-            fi
 
-            # Cut over: run stable on port 80 -> 8080
-            docker rm -f "$APP_NAME" || true
-            docker run -d \
-              --name "$APP_NAME" \
-              -p 80:8080 \
-              --restart always \
-              -e SPRING_PROFILES_ACTIVE=prod \
-              -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
-              -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
-              -e APP_SEED_ENABLED="$APP_SEED_ENABLED" \
-              ${DB_HOST:+-e DB_HOST="$DB_HOST"} \
-              ${DB_PORT:+-e DB_PORT="$DB_PORT"} \
-              ${DB_NAME:+-e DB_NAME="$DB_NAME"} \
-              ${DB_USER:+-e DB_USER="$DB_USER"} \
-              ${DB_PASS:+-e DB_PASS="$DB_PASS"} \
-              "$IMAGE"
+            echo "Smoke tests:"
+            curl -fsS http://localhost:8080/api/airports | head -c 200 || true; echo
+            curl -fsS http://localhost:8080/api/aircraft | head -c 200 || true; echo
+            curl -fsS http://localhost:8080/api/passengers | head -c 200 || true; echo
 
-            echo "Waiting for $APP_NAME (port 80) readiness..."
-            ok=false
-            for i in {1..12}; do
-              if curl -fsS http://localhost/actuator/health | grep -q '"status":"UP"'; then
-                ok=true; break
-              fi
-              echo "Health(80): not ready yet"
-              sleep 5
-            done
-            if ! $ok; then
-              echo "Stable container not ready. Recent logs:"
-              docker logs --tail=200 "$APP_NAME" || true
-              exit 1
-            fi
-
-            # Cleanup blue
-            docker rm -f "$NEW_NAME" || true
+            docker rm -f "$BLUE" || true
             docker image prune -f || true
 
-            # Show final status
             docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

@@ -1,25 +1,47 @@
+
 # SDAT S4 Sprint API - Backend Documentation
 
-Welcome to the backend API for the SDAT S4 Sprint Project. This is a RESTful Java Spring Boot API hosted live at:
+Welcome to the backend API for the SDAT S4 Sprint Project.  
+This is a RESTful Java Spring Boot API hosted on **AWS EC2**, with images stored in **Amazon ECR**, and IAM roles handling secure access.  
 
+Live API (EC2 public IP or domain):  
 ```
-https://sdat-s4-sprint-backend.onrender.com/
-```
+
+http\://3.139.58.109:8080/api
+
+````
 
 ---
 
-## Core Entities
+## 🚀 AWS Deployment Architecture
+
+- **Spring Boot Backend** is built into a Docker image.
+- **Amazon ECR (Elastic Container Registry):** stores the built Docker image (`airportsim-backend`).
+- **GitHub Actions CI/CD:** on each push, the workflow builds the image and pushes to ECR.
+- **Amazon EC2 (Elastic Compute Cloud):** runs the container using `docker run` or `docker-compose`.
+- **IAM Role/Policy:** grants EC2 permission to pull images from ECR securely.
+- **MySQL Database:** hosted on AWS RDS or locally inside EC2 (configurable via environment variables).
+
+**Flow:**
+1. Push to GitHub → GitHub Actions builds Docker image.
+2. Push image to **ECR**.
+3. EC2 pulls the new image and runs container.
+4. API is exposed on EC2 at `:8080/api/...`.
+
+---
+
+## 🛠 Core Entities
 
 * **City**: `id`, `name`, `province`, `population`
-* **Airport**: `id`, `name`, `code`, `city`
+* **Airport**: `id`, `name`, `portId`, `city`
 * **Passenger**: `id`, `firstName`, `lastName`, `phoneNumber`, `city`
-* **Aircraft**: `id`, `type`, `airlineName`, `numberOfPassengers`
+* **Aircraft**: `id`, `type`, `airlineName`, `numOfPassengers`
+* **Flight**: `id`, `airline`, `flightNumber`, `departureAirport`, `arrivalAirport`, `scheduledDeparture`, `scheduledArrival`, `status`, `distanceKm`, `durationMinutes`
+* **Booking**: `id`, `bookingRef`, `status`, `seatNumber`, `fareClass`, `flight`, `passenger`
 
 ---
 
-## Active Endpoints
-
-> All endpoints are live and return JSON
+## 📡 Endpoints
 
 ### Cities
 
@@ -31,16 +53,6 @@ https://sdat-s4-sprint-backend.onrender.com/
 | PUT    | `/cities/{id}` | Replace a city          |
 | PATCH  | `/cities/{id}` | Partially update a city |
 | DELETE | `/cities/{id}` | Delete a city           |
-
-**POST example:**
-
-```json
-{
-  "name": "St. John's",
-  "province": "NL",
-  "population": 100000
-}
-```
 
 ---
 
@@ -54,19 +66,6 @@ https://sdat-s4-sprint-backend.onrender.com/
 | PUT    | `/airports/{id}`            | Replace an airport          |
 | PATCH  | `/airports/{id}`            | Partially update an airport |
 | DELETE | `/airports/{id}`            | Delete an airport           |
-
-**POST example:**
-
-```
-POST /airports?cityId=1
-```
-
-```json
-{
-  "name": "YYT Airport",
-  "code": "YYT"
-}
-```
 
 ---
 
@@ -83,20 +82,6 @@ POST /airports?cityId=1
 | DELETE | `/passengers/{id}`                                | Delete a passenger                     |
 | PUT    | `/passengers/{passengerId}/aircraft/{aircraftId}` | Assign aircraft to passenger           |
 
-**POST example:**
-
-```
-POST /passengers?cityId=2
-```
-
-```json
-{
-  "firstName": "Colin",
-  "lastName": "Smith",
-  "phoneNumber": "7091234567"
-}
-```
-
 ---
 
 ### Aircraft
@@ -110,25 +95,84 @@ POST /passengers?cityId=2
 | PATCH  | `/aircraft/{id}` | Partially update an aircraft |
 | DELETE | `/aircraft/{id}` | Delete an aircraft           |
 
-**POST example:**
+---
 
-```json
+### Flights
+
+| Method | Endpoint                       | Description                            |
+|--------|--------------------------------|----------------------------------------|
+| GET    | `/flights`                     | List flights (default 200 limit)       |
+| GET    | `/flights/page?page=0&size=50` | Paginated flights                      |
+| GET    | `/flights/count`               | Count flights                          |
+| GET    | `/flights/{id}/departure-airport` | Get flight’s departure airport       |
+| GET    | `/flights/{id}/arrival-airport`   | Get flight’s arrival airport         |
+
+---
+
+### Bookings (Passenger ↔ Flight)
+
+| Method | Endpoint                                | Description                                    |
+|--------|-----------------------------------------|------------------------------------------------|
+| POST   | `/bookings`                             | Create booking (link passenger to flight)      |
+| GET    | `/bookings/{id}`                        | Get booking by ID                              |
+| GET    | `/bookings/by-passenger/{passengerId}`  | Raw list of bookings for a passenger           |
+| GET    | `/bookings/by-flight/{flightId}`        | Raw list of bookings for a flight              |
+| PATCH  | `/bookings/{id}/status`                 | Update booking status (CONFIRMED, CANCELLED…)  |
+| DELETE | `/bookings/{id}`                        | Cancel booking (sets status = CANCELLED)       |
+| GET    | `/bookings/by-flight/{id}/manifest`     | Passenger manifest for a flight (with seats, times, airport names) |
+| GET    | `/bookings/by-passenger/{id}/itinerary` | Passenger itinerary (flights with times, airports, status) |
+
+---
+
+## 🧑‍💻 Example Usage
+
+**Create a booking:**
+```http
+POST /api/bookings
+Content-Type: application/json
+
 {
-  "type": "Boeing 737",
-  "airlineName": "Air Canada",
-  "numberOfPassengers": 180
+  "flightId": 1,
+  "passengerId": 2,
+  "seatNumber": "12A",
+  "fareClass": "ECONOMY"
 }
+````
+
+**Flight manifest:**
+
+```
+GET /api/bookings/by-flight/1/manifest
+```
+
+**Passenger itinerary:**
+
+```
+GET /api/bookings/by-passenger/2/itinerary
 ```
 
 ---
 
-## Reminder
+## 🔒 IAM & Security
 
-All updates (PATCH/PUT) require the `id` in the URL.
-Avoid using `POST` to update — it will create duplicates.
+* **IAM Role:** EC2 instance role allows pulling private images from ECR without static credentials.
+* **ECR Repository Policy:** grants push/pull to CI/CD GitHub Action role and pull to EC2 instance role.
+* **Secrets:** Database credentials managed via **AWS Secrets Manager** or environment variables.
+* **CORS:** configured in `application.properties` to allow trusted frontend origins.
 
 ---
 
-```
-Built by Colin | Java, Spring Boot, MySQL | Deployed on Render
-```
+## ✅ Notes
+
+* All responses are JSON.
+* `PATCH` and `PUT` require the `id` in the path.
+* `POST` is only for **create**, not update.
+* Hibernate auto-creates tables (`spring.jpa.hibernate.ddl-auto=update`).
+
+---
+
+Built with Java 17, Spring Boot, MySQL
+Deployed on AWS (EC2 + ECR + IAM + Docker)
+
+
+

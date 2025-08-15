@@ -10,22 +10,44 @@ import java.util.Arrays;
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
 
-    // Comma-separated origins; defaults cover common local dev ports (React/Vite)
-    @Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173}")
+    @Value("${app.cors.allowed-origins:}")
     private String allowedOriginsCsv;
+
+    @Value("${app.cors.allow-credentials:true}")
+    private boolean allowCredentials;
+
+    @Value("${app.cors.allowed-methods:GET,POST,PUT,PATCH,DELETE,OPTIONS}")
+    private String allowedMethodsCsv;
+
+    @Value("${app.cors.allowed-headers:*}")
+    private String allowedHeadersCsv;
+
+    @Value("${app.cors.exposed-headers:Location}")
+    private String exposedHeadersCsv;
+
+    @Value("${app.cors.max-age-seconds:3600}")
+    private long maxAgeSeconds;
+
+    private static String[] splitCsv(String csv) {
+        if (csv == null || csv.isBlank()) return new String[0];
+        return Arrays.stream(csv.split("\\s*,\\s*"))
+                .filter(s -> !s.isBlank())
+                .toArray(String[]::new);
+    }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        String[] origins = Arrays.stream(allowedOriginsCsv.split("\\s*,\\s*"))
-                .filter(s -> !s.isBlank())
-                .toArray(String[]::new);
+        String[] origins = splitCsv(allowedOriginsCsv);
+        String[] methods = splitCsv(allowedMethodsCsv);
+        String[] allowedHeaders = splitCsv(allowedHeadersCsv);
+        String[] exposedHeaders = splitCsv(exposedHeadersCsv);
 
         registry.addMapping("/**")
-                .allowedOrigins(origins)                // exact origins (credentials-safe)
-                .allowedMethods("GET","POST","PUT","PATCH","DELETE","OPTIONS")
-                .allowedHeaders("*")
-                .exposedHeaders("Location")
-                .allowCredentials(true)                // set false if you don't use cookies/auth
-                .maxAge(3600);
+                .allowedOrigins(origins)          // exact origins only (required when credentials=true)
+                .allowedMethods(methods)
+                .allowedHeaders(allowedHeaders.length == 0 ? new String[] {"*"} : allowedHeaders)
+                .exposedHeaders(exposedHeaders)
+                .allowCredentials(allowCredentials)
+                .maxAge(maxAgeSeconds);
     }
 }

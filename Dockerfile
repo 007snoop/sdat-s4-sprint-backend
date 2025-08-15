@@ -1,34 +1,42 @@
-# --- Stage 1: Build the app using Maven ---
+# =========================
+# Stage 1: Build with Maven
+# =========================
 FROM maven:3.9.4-eclipse-temurin-17 AS build
-WORKDIR /app
+WORKDIR /workspace
 
-# Copy Maven wrapper, pom.xml, and sources
+# Copy only what's needed to resolve dependencies first (better cache)
+COPY pom.xml .
 COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
-RUN chmod +x mvnw
+COPY mvnw .
+RUN chmod +x mvnw && ./mvnw -q -DskipTests dependency:go-offline
+
+# Now copy sources and build
 COPY src ./src
+RUN ./mvnw -q clean package -DskipTests
 
-# Build the project (skip tests for faster CI/CD)
-RUN ./mvnw clean package -DskipTests
 
-# --- Stage 2: Run the app with minimal image ---
-FROM eclipse-temurin:17-jdk-alpine
+# =========================
+# Stage 2: Runtime (slim JRE)
+# =========================
+FROM eclipse-temurin:17-jre-alpine
 
-# Install CA certificates so AWS SDK can make HTTPS calls
-RUN apk add --no-cache ca-certificates && update-ca-certificates
-
-# Set working directory
+RUN apk add --no-cache ca-certificates curl && update-ca-certificates
+RUN addgroup -S app && adduser -S app -G app
+USER app
 WORKDIR /app
 
-# Copy JAR from build stage
-COPY --from=build /app/target/*.jar app.jar
+COPY --from=build /workspace/target/*.jar /app/app.jar
 
-# Default environment variables (can be overridden at runtime)
+# Keep sane JVM defaults
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom"
+
+# Defaults (override at runtime in CI/CD)
 ENV AWS_REGION=us-east-2
 ENV useAwsSecrets=true
 
-# Expose the app port
-EXPOSE 8080
+# IMPORTANT: context path is /api → update health URL
+HEALTHCHECK --interval=10s --timeout=3s --retries=10 --start-period=60s \
+  CMD curl -fsS http://localhost:8080/api/actuator/health/liveness || exit 1
 
-# Run the Spring Boot application
-ENTRYPOINT ["java", "-jar", "app.jar"]
+EXPOSE 8080
+ENTRYPOINT ["java","-jar","/app/app.jar"]

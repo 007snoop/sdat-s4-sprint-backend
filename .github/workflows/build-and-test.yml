@@ -2,94 +2,184 @@ name: Build, Push to ECR, and Deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-2
   ECR_REPOSITORY: airportsim-backend
   IMAGE_TAG: ${{ github.sha }}
+  DOCKER_PLATFORM: linux/amd64
+
+concurrency:
+  group: airportsim-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # Required for OIDC
-      contents: read    # Required to read repo
+      id-token: write
+      contents: read
+
+    outputs:
+      ecr_uri: ${{ steps.meta.outputs.ecr_uri }}
+      image_sha: ${{ steps.meta.outputs.image_sha }}
+      image_latest: ${{ steps.meta.outputs.image_latest }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
-      - name: Cache Maven dependencies
-        uses: actions/cache@v3
+      - uses: actions/cache@v3
         with:
           path: ~/.m2/repository
           key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-
 
-      - name: Make mvnw executable
-        run: chmod +x ./mvnw
-
       - name: Build JAR
-        run: ./mvnw clean package -DskipTests
+        run: |
+          chmod +x ./mvnw
+          ./mvnw -q clean package -DskipTests
 
-      - name: Configure AWS credentials from IAM Role
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::876455127118:role/GitHubActions-Flight-Role
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-${{ github.run_id }}
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to ECR
+      - name: Compute ECR URI and tags
+        id: meta
+        shell: bash
         run: |
-          ECR_URI=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION --query 'repositories[0].repositoryUri' --output text)
-          docker build -t $ECR_URI:$IMAGE_TAG .
-          docker push $ECR_URI:$IMAGE_TAG
-          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ecr_uri=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_latest=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
 
-  # Optional Deploy Job (runs only on push to main)
+      - name: Ensure repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1 \
+          || aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (sha + latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ env.DOCKER_PLATFORM }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_sha }}
+            ${{ steps.meta.outputs.image_latest }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.ecr_uri }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.ecr_uri }}:buildcache,mode=max
+
   deploy:
     needs: build-and-push
-    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
 
     steps:
-      - name: Configure AWS credentials from IAM Role
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::876455127118:role/GitHubActions-Flight-Role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: SSH into EC2 and deploy container
+      - name: SSH into EC2 and deploy (blue/green, 8080 target)
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          ECR_URI:    ${{ needs.build-and-push.outputs.ecr_uri }}
+          IMAGE:      ${{ needs.build-and-push.outputs.image_latest }}
+
+          FRONTEND_ORIGINS: ${{ secrets.FRONTEND_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,https://djyim49uad8qf.cloudfront.net' }}
+          APP_SEED_ENABLED: ${{ secrets.APP_SEED_ENABLED || 'false' }}
+
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_REGION,ECR_URI,IMAGE,FRONTEND_ORIGINS,APP_SEED_ENABLED,DB_HOST,DB_PORT,DB_NAME,DB_USER,DB_PASS
           script: |
-            ECR_URI=${{ env.ECR_URI }}
-            docker pull $ECR_URI:${{ env.IMAGE_TAG }}
-            docker stop airportsim || true
-            docker rm airportsim || true
-            docker run -d \
-              --name airportsim \
-              -p 80:8080 \
-              -e AWS_REGION=${{ env.AWS_REGION }} \
-              -e useAwsSecrets=true \
-              $ECR_URI:${{ env.IMAGE_TAG }}
+            set -euo pipefail
+
+            APP="airportsim"
+            BLUE="airportsim_blue_$RANDOM"
+
+            need() { command -v "$1" >/dev/null 2>&1 || { sudo yum -y install "$1" || sudo dnf -y install "$1"; }; }
+            need docker; sudo systemctl enable --now docker || true; sudo usermod -aG docker ec2-user || true
+            need aws; need curl
+
+            aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
+            docker pull "$IMAGE"
+
+            docker ps -a --format '{{.Names}}' | grep -E '^airportsim_blue_' && docker rm -f $(docker ps -a --format '{{.Names}}' | grep -E '^airportsim_blue_') || true
+
+            docker run -d --name "$BLUE" -p 8081:8080 --restart unless-stopped \
+              -e SPRING_PROFILES_ACTIVE=prod \
+              -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+              -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
+              -e APP_SEED_ENABLED="$APP_SEED_ENABLED" \
+              ${DB_HOST:+-e DB_HOST="$DB_HOST"} \
+              ${DB_PORT:+-e DB_PORT="$DB_PORT"} \
+              ${DB_NAME:+-e DB_NAME="$DB_NAME"} \
+              ${DB_USER:+-e DB_USER="$DB_USER"} \
+              ${DB_PASS:+-e DB_PASS="$DB_PASS"} \
+              "$IMAGE"
+
+            echo "Waiting for BLUE (http://localhost:8081/api/actuator/health) ..."
+            for i in {1..30}; do
+              if curl -fsS http://localhost:8081/api/actuator/health | grep -q '"status":"UP"'; then
+                echo "BLUE is healthy."; break; fi
+              echo "… still starting"; sleep 4
+              if [ "$i" -eq 30 ]; then
+                echo "BLUE failed to become healthy:"; docker logs --tail=200 "$BLUE" || true; exit 1; fi
+            done
+
+            docker rm -f "$APP" || true
+            docker run -d --name "$APP" -p 8080:8080 --restart always \
+              -e SPRING_PROFILES_ACTIVE=prod \
+              -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m" \
+              -e FRONTEND_ORIGINS="$FRONTEND_ORIGINS" \
+              -e APP_SEED_ENABLED="$APP_SEED_ENABLED" \
+              ${DB_HOST:+-e DB_HOST="$DB_HOST"} \
+              ${DB_PORT:+-e DB_PORT="$DB_PORT"} \
+              ${DB_NAME:+-e DB_NAME="$DB_NAME"} \
+              ${DB_USER:+-e DB_USER="$DB_USER"} \
+              ${DB_PASS:+-e DB_PASS="$DB_PASS"} \
+              "$IMAGE"
+
+            echo "Waiting for STABLE (http://localhost:8080/api/actuator/health) ..."
+            for i in {1..24}; do
+              if curl -fsS http://localhost:8080/api/actuator/health | grep -q '"status":"UP"'; then
+                echo "STABLE is healthy."; break; fi
+              echo "… not ready yet"; sleep 5
+              if [ "$i" -eq 24 ]; then
+                echo "STABLE failed to become healthy:"; docker logs --tail=200 "$APP" || true; exit 1; fi
+            done
+
+            echo "Smoke tests:"
+            curl -fsS http://localhost:8080/api/airports | head -c 200 || true; echo
+            curl -fsS http://localhost:8080/api/aircraft | head -c 200 || true; echo
+            curl -fsS http://localhost:8080/api/passengers | head -c 200 || true; echo
+
+            docker rm -f "$BLUE" || true
+            docker image prune -f || true
+
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
